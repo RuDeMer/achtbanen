@@ -1058,17 +1058,21 @@ def foto_uit_categorie(categorie):
 def haal_wd_fotobronnen(qids):
     """Commons-categorie (P373) en Wikipedia-artikelen van achtbanen zonder P18."""
     categorieen, artikelen = {}, defaultdict(dict)
-    wikis = " ".join(f"<https://{t}.wikipedia.org/>" for t in WIKIPEDIA_TALEN)
+    wikis = ", ".join(f"<https://{t}.wikipedia.org/>" for t in WIKIPEDIA_TALEN)
+    # Twee eenvoudige vragen in plaats van één met UNION: die laatste liep bij
+    # Wikidata v1 steeds vast (HTTP 504).
+    vragen = [
+        "SELECT ?item ?cat WHERE {{ VALUES ?item {{ {w} }} ?item wdt:P373 ?cat . }}",
+        "SELECT ?item ?artikel WHERE {{ VALUES ?item {{ {w} }} ?artikel schema:about ?item ; schema:isPartOf ?wiki . "
+        "FILTER(?wiki IN (" + wikis.replace("{", "{{").replace("}", "}}") + ")) }}",
+    ]
     for stuk in in_stukjes(sorted(qids), 300):
         waarden = " ".join(f"wd:{q}" for q in stuk)
-        sparql = PREFIXEN + f"""
-SELECT ?item ?cat ?artikel WHERE {{
-  VALUES ?item {{ {waarden} }}
-  {{ ?item wdt:P373 ?cat . }}
-  UNION
-  {{ VALUES ?wiki {{ {wikis} }} ?artikel schema:about ?item ; schema:isPartOf ?wiki . }}
-}}"""
-        for rij in vraag(sparql):
+        rijen = []
+        for sjabloon in vragen:
+            rijen += vraag(PREFIXEN + sjabloon.format(w=waarden))
+            time.sleep(1)
+        for rij in rijen:
             q = qid(waarde(rij, "item"))
             if not q:
                 continue
