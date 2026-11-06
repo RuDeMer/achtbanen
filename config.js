@@ -7,7 +7,7 @@ window.SITE = {
 
   // Je GitHub-gebruikersnaam en de naam van deze repository.
   // Die worden gebruikt voor de knop "Zet op mijn lijst".
-  githubGebruiker: "JOUW-GEBRUIKERSNAAM",
+  githubGebruiker: "RuDeMer",
   githubRepo: "achtbanen",
   branch: "main",
 };
