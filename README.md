@@ -96,8 +96,8 @@ Het script draait elke eerste dag van de maand. Wil je niet wachten: ga naar **A
 ## Hoe het script werkt
 
 1. **Wikidata**: alle achtbanen met naam, park, land, cijfers en foto. Het script probeert Wikidata v2, dan v1, dan QLever.
-2. **OpenStreetMap**: één grote vraag aan de Overpass API voor alle objecten met `attraction=roller_coaster`, plus de parkgebieden (`tourism=theme_park`). Met een nette User-Agent, twee reserve-servers, en opnieuw proberen bij drukte.
-3. **Samenvoegen**: een OSM-object hoort bij een Wikidata-achtbaan via de `wikidata`-tag, of op naam plus afstand (300 meter). Het park komt uit het omringende parkgebied. Meerdere OSM-objecten van één achtbaan (spoor en station) worden één. Achtbanen die alleen in OSM staan krijgen een vaste code zoals `osm-way-123`.
+2. **OpenStreetMap**: één grote vraag aan de Overpass API voor alle objecten met `attraction=roller_coaster`, plus de parkgebieden (`tourism=theme_park`). Met een nette User-Agent, twee reserve-servers, en opnieuw proberen bij drukte. Alles samen hooguit 25 minuten; daarna blijven de OSM-gegevens van de vorige keer staan.
+3. **Samenvoegen**: een OSM-object hoort bij een Wikidata-achtbaan via de `wikidata`-tag, of op naam plus afstand: 300 meter, of 1,5 km als de naam precies gelijk is (Wikidata zet een baan vaak midden in het park). Het park komt uit het omringende parkgebied; liggen er gebieden in elkaar, dan gaat het gebied met een Wikidata-koppeling voor. Meerdere OSM-objecten van één achtbaan (spoor en station) worden één. Achtbanen die alleen in OSM staan krijgen een vaste code zoals `osm-way-123`.
 4. **Foto's**, in deze volgorde: Wikidata P18, een geschikte foto uit de Commons-categorie (P373), de vrij gelicenseerde hoofdafbeelding van het Wikipedia-artikel, de `image`- of `wikimedia_commons`-tag uit OSM. Elke foto wordt bij Commons gecontroleerd: hij moet er echt staan, met een vrije licentie. Alleen de bestandsnaam wordt bewaard; de site toont bij elke foto de maker en de licentie.
 
 Beveiligingen:
