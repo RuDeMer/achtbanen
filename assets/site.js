@@ -10,24 +10,35 @@
   const TAAL = "nl-NL";
   const PER_KEER = 48;
   const params = new URLSearchParams(location.search);
+  const PAGINA = document.body.dataset.pagina;
 
-  /* ---------- Beheermodus: alleen jij ziet de knop "Zet op mijn lijst" ----------
-     Zet hem aan door één keer ?beheer=aan achter het adres te zetten,
-     en uit met ?beheer=uit. Je browser onthoudt de keuze. */
-  try {
-    if (params.get("beheer") === "aan") localStorage.setItem("beheer", "1");
-    if (params.get("beheer") === "uit") localStorage.removeItem("beheer");
-  } catch (e) { /* opslag niet beschikbaar */ }
-  const beheer = (() => { try { return localStorage.getItem("beheer") === "1"; } catch (e) { return false; } })();
+  /* ---------- Opslag in je eigen browser ---------- */
+  const opslag = {
+    lees(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    zet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
+    wis(k) { try { localStorage.removeItem(k); } catch (e) { /* geen opslag */ } },
+  };
+
+  /* ---------- Beheer: alleen met een GitHub-token op dit apparaat ----------
+     Het token plak je één keer op beheer.html. Het blijft in de opslag van je
+     eigen browser (localStorage) en komt nooit in de repository of in de code.
+     Zonder token ziet een bezoeker geen enkele beheerknop. */
+  const TOKEN_SLEUTEL = "achtbanen-token";
+  opslag.wis("beheer"); // van de oude beheermodus
+  if (params.get("beheer") === "aan" && PAGINA !== "beheer") { location.replace("beheer.html"); return; }
+  const repoBekend = !!SITE.githubGebruiker && !/JOUW-/.test(SITE.githubGebruiker) && !!SITE.githubRepo;
+  const leesToken = () => opslag.lees(TOKEN_SLEUTEL) || "";
+  const beheer = repoBekend && !!leesToken();
 
   /* ---------- Hulpfuncties ---------- */
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const getal = (n, dec = 0) => Number(n).toLocaleString(TAAL, { maximumFractionDigits: dec });
-  const zoekbaar = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const zoekbaar = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
   const meervoud = (n, een, veel) => (n === 1 ? een : veel);
   const pagina = (a) => `achtbaan.html?id=${encodeURIComponent(a.id)}`;
+  const wacht = (ms) => new Promise((klaar) => setTimeout(klaar, ms));
 
   function datum(waarde, kort) {
     const s = String(waarde || "").trim();
@@ -50,6 +61,18 @@
   }
   const commonsPagina = (bestand) =>
     `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(bestand.replace(/ /g, "_"))}`;
+  const eigenPad = (foto) => (/^(\.\/)?fotos\//.test(foto || "") ? foto.replace(/^\.\//, "") : "");
+
+  // Een eigen foto die net is geüpload staat nog niet op de site. Probeer hem dan bij GitHub zelf.
+  function fotoMislukt(img, anders) {
+    const pad = img.dataset.eigen;
+    if (pad && repoBekend && !img.dataset.tweede) {
+      img.dataset.tweede = "1";
+      img.src = `https://raw.githubusercontent.com/${SITE.githubGebruiker}/${SITE.githubRepo}/${SITE.branch}/${pad}`;
+      return;
+    }
+    if (anders) anders(); else img.remove();
+  }
 
   function statusTekst(a) {
     if (a.status === "gesloten") return a.gesloten ? `Gesloten in ${a.gesloten}` : "Gesloten";
@@ -57,13 +80,13 @@
     return a.geopend ? `Open sinds ${a.geopend}` : "Open";
   }
 
-  function toast(tekst) {
+  function toast(tekst, lang) {
     const t = document.createElement("div");
     t.className = "toast";
     t.setAttribute("role", "status");
     t.textContent = tekst;
     (document.querySelector("dialog[open]") || document.body).appendChild(t);
-    setTimeout(() => t.remove(), 3200);
+    setTimeout(() => t.remove(), lang ? 6500 : 3200);
   }
 
   function toonFout(vak, fout) {
@@ -78,6 +101,146 @@
     </div>`;
   }
 
+  /* ---------- JSON lezen en netjes schrijven ---------- */
+
+  function leesJsonTekst(tekst, pad) {
+    try {
+      // Een komma te veel na de laatste regel is geen probleem
+      return JSON.parse(tekst.replace(/,(\s*[\]}])/g, "$1"));
+    } catch (e) {
+      throw new Error(`In ${pad} zit een typefout: ${e.message}`);
+    }
+  }
+
+  // Eén regel per rit (of achtbaan), net zoals je hem met de hand zou typen
+  function regelJson(o) {
+    if (!o || typeof o !== "object" || Array.isArray(o)) return JSON.stringify(o);
+    return `{ ${Object.entries(o).filter(([, v]) => v !== undefined)
+      .map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(", ")} }`;
+  }
+  function netteJson(data, lijstSleutel) {
+    const delen = Object.entries(data).map(([k, v]) => {
+      if (k !== lijstSleutel) return `  ${JSON.stringify(k)}: ${JSON.stringify(v)}`;
+      return `  ${JSON.stringify(k)}: [\n${v.map((x) => "    " + regelJson(x)).join(",\n")}${v.length ? "\n" : ""}  ]`;
+    });
+    return `{\n${delen.join(",\n")}\n}\n`;
+  }
+
+  // Twee ritten zijn dezelfde als alle velden gelijk zijn (volgorde maakt niet uit)
+  const vorm = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
+  const vindRit = (lijst, rit) => lijst.findIndex((x) => x && vorm(x) === vorm(rit));
+
+  /* ---------- GitHub: rechtstreeks opslaan met je token ---------- */
+
+  class GitHubFout extends Error {
+    constructor(status, uitleg, bericht) { super(uitleg); this.status = status; this.bericht = bericht || ""; }
+  }
+
+  function legFoutUit(status, bericht) {
+    if (status === 401) return "GitHub accepteert je token niet (meer). Misschien is hij verlopen of ingetrokken. Plak een nieuw token op de beheerpagina.";
+    if (status === 403 && /rate limit/i.test(bericht)) return "Even te veel verzoeken naar GitHub. Probeer het over een paar minuten opnieuw.";
+    if (status === 403) return "Je token mag hier niet schrijven. Geef hem bij Repository permissions de rechten Contents: Read and write.";
+    if (status === 404) return `GitHub vindt ${SITE.githubGebruiker}/${SITE.githubRepo} niet. Heeft je token toegang tot deze repository?`;
+    if (status === 409) return "Het bestand is net door iets anders gewijzigd.";
+    return `GitHub gaf fout ${status}${bericht ? `: ${bericht}` : ""}.`;
+  }
+
+  async function github(pad, opties = {}, token = leesToken()) {
+    let r;
+    try {
+      r = await fetch(`https://api.github.com/repos/${encodeURIComponent(SITE.githubGebruiker)}/${encodeURIComponent(SITE.githubRepo)}${pad}`, {
+        cache: "no-store",
+        ...opties,
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          ...(opties.body ? { "Content-Type": "application/json" } : {}),
+        },
+      });
+    } catch (e) {
+      throw new GitHubFout(0, "GitHub is niet bereikbaar. Controleer je internetverbinding en probeer het opnieuw.");
+    }
+    if (r.ok) return r.status === 204 ? null : r.json();
+    let bericht = "";
+    try { bericht = (await r.json()).message || ""; } catch (e) { /* geen uitleg */ }
+    throw new GitHubFout(r.status, legFoutUit(r.status, bericht), bericht);
+  }
+
+  const inhoudPad = (pad) => `/contents/${pad.split("/").map(encodeURIComponent).join("/")}`;
+
+  function naarBase64(tekst) {
+    const bytes = new TextEncoder().encode(tekst);
+    let s = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+  function uitBase64(b64) {
+    const bin = atob(String(b64 || "").replace(/\s/g, ""));
+    return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  }
+
+  async function haalBestand(pad, token) {
+    try {
+      const d = await github(`${inhoudPad(pad)}?ref=${encodeURIComponent(SITE.branch)}`, {}, token);
+      return { tekst: uitBase64(d.content), sha: d.sha };
+    } catch (e) {
+      if (e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  async function schrijfBestand(pad, base64, sha, bericht, token) {
+    const d = await github(inhoudPad(pad), {
+      method: "PUT",
+      body: JSON.stringify({ message: bericht, content: base64, branch: SITE.branch, ...(sha ? { sha } : {}) }),
+    }, token);
+    return d.content && d.content.sha;
+  }
+
+  // Wat je net hebt opgeslagen, zodat je het meteen ziet (ook als GitHub nog even de oude versie geeft)
+  const GESCHREVEN = "achtbanen-geschreven";
+  function onthoudGeschreven(pad, tekst, sha) {
+    let alles = {};
+    try { alles = JSON.parse(opslag.lees(GESCHREVEN) || "{}"); } catch (e) { alles = {}; }
+    alles[pad] = { tekst, sha, tijd: Date.now() };
+    opslag.zet(GESCHREVEN, JSON.stringify(alles));
+  }
+  function leesGeschreven(pad) {
+    try { return JSON.parse(opslag.lees(GESCHREVEN) || "{}")[pad] || null; } catch (e) { return null; }
+  }
+
+  // Haalt een JSON-bestand op, past de lijst erin aan en schrijft hem terug, met de sha erbij.
+  // Heeft iets anders het bestand intussen gewijzigd (conflict), dan haalt hij het opnieuw op
+  // en probeert hij het nog eens.
+  async function wijzigJson(pad, lijstSleutel, wijzig, bericht) {
+    for (let poging = 1; ; poging++) {
+      const bestand = await haalBestand(pad);
+      const data = bestand ? leesJsonTekst(bestand.tekst, pad) : {};
+      const lijst = Array.isArray(data[lijstSleutel]) ? data[lijstSleutel].slice() : [];
+      data[lijstSleutel] = wijzig(lijst);
+      const tekst = netteJson(data, lijstSleutel);
+      try {
+        const sha = await schrijfBestand(pad, naarBase64(tekst), bestand && bestand.sha, bericht);
+        onthoudGeschreven(pad, tekst, sha);
+        return data;
+      } catch (e) {
+        const conflict = e.status === 409 || (e.status === 422 && /sha/i.test(e.bericht));
+        if (!conflict || poging >= 4) throw e;
+        console.warn(`Conflict bij ${pad}, poging ${poging + 1}`);
+        await wacht(500 * poging);
+      }
+    }
+  }
+
+  // Beheer: je eigen bestanden komen rechtstreeks van GitHub, dan zie je een wijziging meteen
+  async function haalVers(pad) {
+    const b = await haalBestand(pad);
+    const net = leesGeschreven(pad);
+    let tekst = b ? b.tekst : null;
+    if (net && Date.now() - net.tijd < 120000 && (!b || b.sha !== net.sha)) tekst = net.tekst;
+    return tekst == null ? null : leesJsonTekst(tekst, pad);
+  }
+
   /* ---------- Gegevens laden ---------- */
 
   async function haalJson(pad, verplicht) {
@@ -87,13 +250,18 @@
       if (verplicht) throw new Error(`Het bestand ${pad} kon niet geladen worden${r ? ` (fout ${r.status})` : ""}.`);
       return null;
     }
-    const tekst = await r.text();
-    try {
-      // Een komma te veel na de laatste regel is geen probleem
-      return JSON.parse(tekst.replace(/,(\s*[\]}])/g, "$1"));
-    } catch (e) {
-      throw new Error(`In ${pad} zit een typefout: ${e.message}`);
+    return leesJsonTekst(await r.text(), pad);
+  }
+
+  let apiWaarschuwing = "";
+  async function laadEigen(pad) {
+    if (beheer) {
+      try { return await haalVers(pad); } catch (e) {
+        console.warn(e);
+        apiWaarschuwing = `De nieuwste versie kon niet bij GitHub opgehaald worden. ${e.message}`;
+      }
     }
+    return haalJson(pad, false);
   }
 
   let geladen = null;
@@ -101,32 +269,44 @@
     geladen = geladen || (async () => {
       const [basis, extra, mijn] = await Promise.all([
         haalJson("data/achtbanen.json", true),
-        haalJson("data/extra.json", false),
-        haalJson("data/gereden.json", false),
+        laadEigen("data/extra.json"),
+        laadEigen("data/gereden.json"),
       ]);
       const lijst = [...(basis.achtbanen || []), ...((extra && extra.achtbanen) || [])]
         .filter((a) => a && a.id && a.naam);
       const perId = new Map(lijst.map((a) => [a.id, a]));
-
-      const ritten = ((mijn && mijn.gereden) || []).filter((r) => r && r.id);
-      const onbekend = [];
-      for (const rit of ritten) {
-        const a = perId.get(rit.id);
-        if (!a) { onbekend.push(rit.id); continue; }
-        (a.ritten = a.ritten || []).push(rit);
-      }
-      for (const a of lijst) {
-        if (a.ritten) {
-          a.ritten.sort((x, y) => String(x.datum || "9999").localeCompare(String(y.datum || "9999")));
-          // Eerste rit telt; cijfer, notitie en foto mogen in een latere regel staan
-          a.rit = Object.assign({}, ...a.ritten.slice().reverse(), { datum: a.ritten[0].datum });
-        }
-        a._zoek = zoekbaar([a.naam, a.park, a.land, a.fabrikant, a.type].join(" "));
-      }
-      if (onbekend.length) console.warn("Deze codes uit gereden.json staan niet in de lijst:", onbekend);
-      return { lijst, perId, bijgewerkt: basis.bijgewerkt, onbekend };
+      for (const a of lijst) a._zoek = zoekbaar([a.naam, a.park, a.land, a.fabrikant, a.type].join(" "));
+      const data = { lijst, perId, bijgewerkt: basis.bijgewerkt };
+      zetRitten(data, (mijn && mijn.gereden) || []);
+      if (apiWaarschuwing) setTimeout(() => toast(apiWaarschuwing, true), 400);
+      return data;
     })();
     return geladen;
+  }
+
+  // Koppelt de ritten uit gereden.json aan de achtbanen. Wordt na elke wijziging opnieuw gedaan.
+  function zetRitten(data, ritten) {
+    data.ritten = ritten.filter((r) => r && r.id);
+    data.onbekend = [];
+    for (const a of data.lijst) { delete a.ritten; delete a.rit; }
+    for (const rit of data.ritten) {
+      const a = data.perId.get(rit.id);
+      if (!a) { data.onbekend.push(rit); continue; }
+      (a.ritten = a.ritten || []).push(rit);
+    }
+    for (const a of data.lijst) {
+      if (!a.ritten) continue;
+      a.ritten.sort((x, y) => String(x.datum || "9999").localeCompare(String(y.datum || "9999")));
+      // Eerste rit telt; cijfer, notitie en foto mogen in een latere regel staan
+      a.rit = Object.assign({}, ...a.ritten.slice().reverse(), { datum: a.ritten[0].datum });
+    }
+    data.gereden = data.lijst.filter((a) => a.rit);
+    if (data.onbekend.length) console.warn("Deze codes uit gereden.json staan niet in de lijst:", data.onbekend.map((r) => r.id));
+  }
+
+  async function bewaarRitten(data, wijzig, bericht) {
+    const nieuw = await wijzigJson("data/gereden.json", "gereden", wijzig, bericht);
+    zetRitten(data, nieuw.gereden);
   }
 
   /* ---------- Startpagina ---------- */
@@ -224,7 +404,7 @@
 
   function vulFeiten(gereden) {
     const vak = $("#feiten");
-    if (!gereden.length) return;
+    if (!gereden.length) { vak.hidden = true; vak.innerHTML = ""; return; }
     const hoogste = (veld) => gereden.filter((a) => a[veld]).sort((a, b) => b[veld] - a[veld])[0];
     const opDatum = gereden.filter((a) => a.rit.datum)
       .sort((a, b) => String(a.rit.datum).localeCompare(String(b.rit.datum)));
@@ -251,10 +431,12 @@
     vak.hidden = false;
   }
 
+  let grooteKaart = null;
   function tekenKaart(gereden) {
     const sectie = $("#kaart-sectie");
     const metPlek = gereden.filter((a) => a.lat != null && a.lon != null);
-    if (!metPlek.length || !window.L) return;
+    if (grooteKaart) { grooteKaart.remove(); grooteKaart = null; }
+    if (!metPlek.length || !window.L) { sectie.hidden = true; return; }
     sectie.hidden = false;
 
     const groepen = new Map();
@@ -264,7 +446,7 @@
       groepen.get(sleutel).banen.push(a);
     }
 
-    const kaart = L.map("kaart", { scrollWheelZoom: false, worldCopyJump: true });
+    const kaart = grooteKaart = L.map("kaart", { scrollWheelZoom: false, worldCopyJump: true });
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 18,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
@@ -295,11 +477,13 @@
   };
 
   function kaartHtml(a) {
-    const src = fotoBron(a.rit?.foto || a.foto, 500);
+    const foto = a.rit?.foto || a.foto;
+    const src = fotoBron(foto, 500);
     const plek = [a.park, a.land].filter(Boolean).join(", ");
+    const eigen = eigenPad(foto);
     return `
       <a class="kaart${a.rit ? " is-gereden" : ""}" href="${pagina(a)}">
-        <span class="kaart-foto">${src ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ""}</span>
+        <span class="kaart-foto">${src ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async"${eigen ? ` data-eigen="${esc(eigen)}"` : ""}>` : ""}</span>
         <span class="kaart-tekst">
           <span class="kaart-naam">${esc(a.naam)}</span>
           ${plek ? `<span class="kaart-plek">${esc(plek)}</span>` : ""}
@@ -405,10 +589,10 @@
       ververs();
     }
 
-    let wacht;
+    let wachtOp;
     el.zoek.addEventListener("input", () => {
-      clearTimeout(wacht);
-      wacht = setTimeout(() => { st.q = el.zoek.value.trim(); ververs(); }, 150);
+      clearTimeout(wachtOp);
+      wachtOp = setTimeout(() => { st.q = el.zoek.value.trim(); ververs(); }, 150);
     });
     el.land.addEventListener("change", () => { st.land = el.land.value; ververs(); });
     el.status.addEventListener("change", () => { st.status = el.status.value; ververs(); });
@@ -419,6 +603,8 @@
       ververs();
     });
     el.meer.addEventListener("click", () => { st.toon += PER_KEER; toon(true); });
+    // Foto's die niet laden: eigen foto nog eens proberen bij GitHub, anders weghalen
+    el.raster.addEventListener("error", (e) => { if (e.target.tagName === "IMG") fotoMislukt(e.target); }, true);
 
     // Terugkomen van een attractiepagina: zelfde plek in de lijst
     let terug = null;
@@ -435,6 +621,9 @@
     toon(false);
     if (terug) scrollTo({ top: terug.y, behavior: "instant" });
     else if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView({ behavior: "instant" });
+
+    // Na een wijziging: opnieuw tekenen, zelfde filters en zelfde aantal kaartjes
+    return { herteken() { bereken(); toon(false); } };
   }
 
   async function startPagina() {
@@ -445,10 +634,9 @@
       toonFout($("#raster"), e);
       return;
     }
-    const gereden = data.lijst.filter((a) => a.rit);
-    vulHero(gereden);
-    vulFeiten(gereden);
-    tekenKaart(gereden);
+    vulHero(data.gereden);
+    vulFeiten(data.gereden);
+    tekenKaart(data.gereden);
     startOverzicht(data);
     if (data.bijgewerkt) $("#bijgewerkt").textContent = `, bijgewerkt op ${datum(data.bijgewerkt)}`;
   }
@@ -478,6 +666,10 @@
     return { maker: platteTekst(m.Artist?.value), licentie: platteTekst(m.LicenseShortName?.value) };
   }
 
+  // Na een wijziging tekent de pagina zichzelf opnieuw; dit voorkomt dat alles opnieuw wordt opgehaald
+  const eenKeer = new Map();
+  const onthoud = (sleutel, maak) => { if (!eenKeer.has(sleutel)) eenKeer.set(sleutel, maak()); return eenKeer.get(sleutel); };
+
   function duurTekst(sec) {
     const m = Math.floor(sec / 60), s = Math.round(sec % 60);
     return m ? `${m}:${String(s).padStart(2, "0")}` : `${s} s`;
@@ -499,23 +691,41 @@
       `<div><dt>${label}</dt><dd${tekst ? ' class="tekstwaarde"' : ""}>${esc(w)}</dd></div>`).join("")}</dl>`;
   }
 
+  function ritOmschrijving(x) {
+    return [
+      datum(x.datum) || "datum onbekend",
+      x.cijfer ? `${getal(x.cijfer, 1)}/10` : "",
+      x.notitie || "",
+    ].filter(Boolean).join(", ");
+  }
+
   function ritHtml(a) {
     if (!a.rit) {
       return beheer
         ? `<section class="blok"><div class="mijn-rit"><p>Deze staat nog niet op je lijst.</p>
-             <button class="knop" type="button" data-rit-knop>Zet op mijn lijst</button></div></section>`
+             <button class="knop" type="button" data-rit-nieuw>Zet op mijn lijst</button></div></section>`
         : "";
     }
     const r = a.rit;
-    const meer = a.ritten.length > 1
-      ? `<p>${a.ritten.length} keer gereden:</p><ul class="ritten">${a.ritten.map((x) =>
-          `<li>${esc(datum(x.datum) || "datum onbekend")}${x.notitie ? `, ${esc(x.notitie)}` : ""}</li>`).join("")}</ul>`
-      : "";
+    let lijst = "";
+    if (beheer) {
+      // Alleen jij: elke rit met een knop om hem te bewerken of te verwijderen
+      lijst = `<p>${a.ritten.length === 1 ? "Je rit:" : `${a.ritten.length} keer gereden:`}</p>
+        <ul class="ritten ritten-beheer">${a.ritten.map((x, i) => `<li>
+          <span>${esc(ritOmschrijving(x))}</span>
+          <span class="knoppen-klein">
+            <button class="knop-klein" type="button" data-rit-bewerk="${i}">Bewerken</button>
+            <button class="knop-klein knop-gevaar" type="button" data-rit-weg="${i}">Verwijderen</button>
+          </span></li>`).join("")}</ul>`;
+    } else if (a.ritten.length > 1) {
+      lijst = `<p>${a.ritten.length} keer gereden:</p><ul class="ritten">${a.ritten.map((x) =>
+        `<li>${esc(datum(x.datum) || "datum onbekend")}${x.notitie ? `, ${esc(x.notitie)}` : ""}</li>`).join("")}</ul>`;
+    }
     return `<section class="blok"><h2>Mijn rit</h2><div class="mijn-rit">
         ${r.notitie && a.ritten.length === 1 ? `<p class="notitie">${esc(r.notitie)}</p>` : ""}
         ${r.cijfer ? `<p><strong>Mijn cijfer: ${getal(r.cijfer, 1)}/10</strong></p>` : ""}
-        ${meer}
-        ${beheer ? `<button class="knop knop-licht" type="button" data-rit-knop>Nog een rit toevoegen</button>` : ""}
+        ${lijst}
+        ${beheer ? `<button class="knop knop-licht" type="button" data-rit-nieuw>Nog een rit toevoegen</button>` : ""}
       </div></section>`;
   }
 
@@ -544,62 +754,103 @@
     return `<section class="blok"><h2>Meer weten</h2><ul class="links">${links.map((l) => `<li>${l}</li>`).join("")}</ul></section>`;
   }
 
-  function startRitVenster(a) {
-    const knoppen = document.querySelectorAll("[data-rit-knop]");
-    if (!knoppen.length) return;
-    const editLink = SITE.githubGebruiker && !/JOUW-/.test(SITE.githubGebruiker)
-      ? `https://github.com/${SITE.githubGebruiker}/${SITE.githubRepo}/edit/${SITE.branch}/data/gereden.json`
-      : null;
-    const vandaag = new Date().toISOString().slice(0, 10);
+  /* ---------- Venster: rit toevoegen of bewerken (alleen beheer) ---------- */
 
+  function maakVenster(titel, inhoud) {
     const d = document.createElement("dialog");
     d.className = "dialoog";
-    d.setAttribute("aria-labelledby", "rit-titel");
-    d.innerHTML = `
-      <h2 id="rit-titel">${esc(a.naam)} op je lijst zetten</h2>
-      <label>Datum van je rit <input type="date" id="rit-datum" value="${vandaag}"></label>
-      <label>Cijfer van 1 tot 10 (mag leeg) <input type="text" id="rit-cijfer" inputmode="decimal" placeholder="bijvoorbeeld 8,5"></label>
-      <label>Notitie (mag leeg) <input type="text" id="rit-notitie" maxlength="200" placeholder="Bijvoorbeeld: voorste rij, regen"></label>
-      <label>Eigen foto in de map fotos (mag leeg) <input type="text" id="rit-foto" placeholder="bijvoorbeeld baron.jpg"></label>
-      <p class="klein">Deze regel komt in <code>data/gereden.json</code>:</p>
-      <pre id="rit-regel"></pre>
-      <div class="knoppen">
-        <button class="knop" type="button" id="rit-kopieer">Kopieer regel</button>
-        ${editLink ? `<a class="knop knop-licht" id="rit-github" href="${editLink}" target="_blank" rel="noopener">Open gereden.json op GitHub</a>` : ""}
-        <button class="knop knop-licht" type="button" id="rit-sluit">Sluiten</button>
-      </div>
-      <p class="klein">Plak de regel op een nieuwe regel direct onder <code>"gereden": [</code> en kies <strong>Commit changes</strong>. Na een paar minuten staat hij op je teller.
-      ${editLink ? "" : " Vul eerst je GitHub-gebruikersnaam in bij config.js, dan verschijnt hier een directe link."}</p>`;
+    d.setAttribute("aria-labelledby", "venster-titel");
+    d.innerHTML = `<h2 id="venster-titel">${esc(titel)}</h2>${inhoud}`;
     document.body.appendChild(d);
+    d.addEventListener("close", () => d.remove());
+    d.showModal();
+    return d;
+  }
+
+  // Knop bezig laten zien en fouten netjes tonen
+  async function metKnop(knop, foutVak, bezigTekst, werk) {
+    const oud = knop.textContent;
+    knop.disabled = true;
+    knop.textContent = bezigTekst;
+    if (foutVak) foutVak.textContent = "";
+    try {
+      await werk();
+      return true;
+    } catch (e) {
+      console.error(e);
+      if (foutVak) foutVak.textContent = e.message; else toast(e.message, true);
+      return false;
+    } finally {
+      knop.disabled = false;
+      knop.textContent = oud;
+    }
+  }
+
+  function openRitVenster(a, data, oud, klaar) {
+    const v = oud || {};
+    const d = maakVenster(oud ? `Rit op ${a.naam} bewerken` : `${a.naam} op je lijst zetten`, `
+      <form method="dialog" class="formulier" id="rit-form">
+        <label>Datum van je rit <input type="date" id="rit-datum" value="${esc(oud ? v.datum || "" : new Date().toISOString().slice(0, 10))}"></label>
+        <label>Cijfer van 1 tot 10 (mag leeg) <input type="text" id="rit-cijfer" inputmode="decimal" placeholder="bijvoorbeeld 8,5" value="${esc(v.cijfer != null ? String(v.cijfer).replace(".", ",") : "")}"></label>
+        <label>Notitie (mag leeg) <input type="text" id="rit-notitie" maxlength="200" placeholder="Bijvoorbeeld: voorste rij, regen" value="${esc(v.notitie || "")}"></label>
+        <label>Eigen foto in de map fotos (mag leeg) <input type="text" id="rit-foto" placeholder="bijvoorbeeld baron.jpg" value="${esc((v.foto || "").replace(/^fotos\//, ""))}"></label>
+        <p class="fout" id="rit-fout" role="alert"></p>
+        <div class="knoppen">
+          <button class="knop" type="submit" id="rit-opslaan">${oud ? "Wijziging opslaan" : "Zet op mijn lijst"}</button>
+          <button class="knop knop-licht" type="button" id="rit-sluit">Annuleren</button>
+        </div>
+        <p class="klein">Wordt meteen opgeslagen in <code>data/gereden.json</code> op GitHub. Bezoekers zien het na een paar minuten.</p>
+      </form>`);
 
     const veld = (id) => $(`#${id}`, d);
-    function regel() {
-      const rit = { id: a.id, datum: veld("rit-datum").value || undefined };
-      const cijfer = parseFloat(String(veld("rit-cijfer").value).replace(",", "."));
-      if (cijfer >= 1 && cijfer <= 10) rit.cijfer = cijfer;
-      const notitie = veld("rit-notitie").value.trim();
-      if (notitie) rit.notitie = notitie;
-      const foto = veld("rit-foto").value.trim().replace(/^fotos\//, "");
-      if (foto) rit.foto = `fotos/${foto}`;
-      return `    ${JSON.stringify(rit).replace(/,"/g, ', "').replace(/":/g, '": ')},`;
-    }
-    const werkBij = () => { veld("rit-regel").textContent = regel().trim(); };
-    d.addEventListener("input", werkBij);
-    werkBij();
-
-    veld("rit-kopieer").addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(regel());
-        toast("Gekopieerd. Plak de regel in gereden.json op GitHub.");
-      } catch (e) {
-        const bereik = document.createRange();
-        bereik.selectNodeContents(veld("rit-regel"));
-        const sel = getSelection(); sel.removeAllRanges(); sel.addRange(bereik);
-        toast("Kopiëren lukte niet automatisch. De regel is geselecteerd, kopieer hem met Ctrl+C.");
-      }
-    });
     veld("rit-sluit").addEventListener("click", () => d.close());
-    knoppen.forEach((k) => k.addEventListener("click", () => d.showModal()));
+
+    function leesFormulier() {
+      // Velden die je in gereden.json met de hand hebt toegevoegd, blijven bewaard
+      const rit = Object.assign({ id: a.id }, v);
+      const zet = (k, w) => { if (w === undefined || w === "") delete rit[k]; else rit[k] = w; };
+      zet("datum", veld("rit-datum").value);
+      const ruwCijfer = veld("rit-cijfer").value.trim();
+      const cijfer = parseFloat(ruwCijfer.replace(",", "."));
+      if (ruwCijfer && !(cijfer >= 1 && cijfer <= 10)) throw new Error("Een cijfer moet tussen 1 en 10 liggen.");
+      zet("cijfer", ruwCijfer ? cijfer : "");
+      zet("notitie", veld("rit-notitie").value.trim());
+      const foto = veld("rit-foto").value.trim().replace(/^\/?fotos\//, "");
+      zet("foto", foto ? `fotos/${foto}` : "");
+      return rit;
+    }
+
+    veld("rit-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      let rit;
+      try { rit = leesFormulier(); } catch (fout) { veld("rit-fout").textContent = fout.message; return; }
+      const gelukt = await metKnop(veld("rit-opslaan"), veld("rit-fout"), "Opslaan…", () =>
+        bewaarRitten(data, (lijst) => {
+          if (!oud) return [...lijst, rit];
+          const i = vindRit(lijst, oud);
+          if (i < 0) throw new Error("Deze rit is intussen op een andere plek gewijzigd. Laad de pagina opnieuw en probeer het nog eens.");
+          lijst[i] = rit;
+          return lijst;
+        }, `${oud ? "Rit bewerkt" : "Rit toegevoegd"}: ${a.naam}`));
+      if (!gelukt) return;
+      d.close();
+      klaar();
+      toast("Opgeslagen. Over een paar minuten staat het ook op de openbare site.", true);
+    });
+  }
+
+  async function verwijderRit(a, data, rit, knop, klaar) {
+    if (!confirm(`Deze rit op ${a.naam} verwijderen?\n${ritOmschrijving(rit)}`)) return;
+    const gelukt = await metKnop(knop, null, "Bezig…", () =>
+      bewaarRitten(data, (lijst) => {
+        const i = vindRit(lijst, rit);
+        if (i < 0) throw new Error("Deze rit staat niet meer in gereden.json. Laad de pagina opnieuw.");
+        lijst.splice(i, 1);
+        return lijst;
+      }, `Rit verwijderd: ${a.naam}`));
+    if (!gelukt) return;
+    klaar();
+    toast("Verwijderd. Over een paar minuten is het ook van de openbare site af.", true);
   }
 
   function tekenMiniKaart(a) {
@@ -627,11 +878,16 @@
         <p><a href="./#overzicht">Zoek in alle achtbanen</a></p></div>`;
       return;
     }
-
     document.title = `${a.naam}${a.park ? ", " + a.park : ""} | ${SITE.naam}`;
+    tekenAchtbaan(a, data);
+  }
+
+  function tekenAchtbaan(a, data) {
+    const vak = $("#inhoud");
     const eigenFoto = a.rit?.foto;
     const fotoVeld = eigenFoto || a.foto;
     const src = fotoBron(fotoVeld, 1280);
+    const eigen = eigenPad(fotoVeld);
     const fotoBijschrift = eigenFoto ? "Eigen foto"
       : a.foto && !isEigenFoto(a.foto) ? `Foto: <a href="${commonsPagina(a.foto)}">Wikimedia Commons</a>` : "";
     const plek = [
@@ -646,7 +902,7 @@
     vak.innerHTML = `
       <nav class="terug" aria-label="Terug"><a href="./#overzicht" id="terug">Alle achtbanen</a></nav>
       <figure class="foto-groot">
-        ${src ? `<img src="${esc(src)}" alt="Foto van ${esc(a.naam)}" id="hoofdfoto">` : '<div class="foto-leeg" role="img" aria-label="Geen foto beschikbaar"></div>'}
+        ${src ? `<img src="${esc(src)}" alt="Foto van ${esc(a.naam)}" id="hoofdfoto"${eigen ? ` data-eigen="${esc(eigen)}"` : ""}>` : '<div class="foto-leeg" role="img" aria-label="Geen foto beschikbaar"></div>'}
         ${fotoBijschrift ? `<figcaption id="foto-bron">${fotoBijschrift}</figcaption>` : ""}
       </figure>
       <header class="titel">
@@ -667,20 +923,28 @@
       ${bronnenHtml(a)}`;
 
     const foto = $("#hoofdfoto");
-    if (foto) foto.addEventListener("error", () => {
+    if (foto) foto.addEventListener("error", () => fotoMislukt(foto, () => {
       foto.replaceWith(Object.assign(document.createElement("div"), { className: "foto-leeg" }));
       $("#foto-bron")?.remove();
-    });
+    }));
 
     $("#terug").addEventListener("click", (e) => {
       if (document.referrer.startsWith(location.origin) && history.length > 1) { e.preventDefault(); history.back(); }
     });
 
     tekenMiniKaart(a);
-    startRitVenster(a);
+
+    if (beheer) {
+      const opnieuw = () => tekenAchtbaan(a, data);
+      vak.querySelectorAll("[data-rit-nieuw]").forEach((k) => k.addEventListener("click", () => openRitVenster(a, data, null, opnieuw)));
+      vak.querySelectorAll("[data-rit-bewerk]").forEach((k) => k.addEventListener("click", () =>
+        openRitVenster(a, data, a.ritten[Number(k.dataset.ritBewerk)], opnieuw)));
+      vak.querySelectorAll("[data-rit-weg]").forEach((k) => k.addEventListener("click", () =>
+        verwijderRit(a, data, a.ritten[Number(k.dataset.ritWeg)], k, opnieuw)));
+    }
 
     if (/^Q\d+$/.test(a.id)) {
-      haalWikipedia(a.id).then((w) => {
+      onthoud(`wiki:${a.id}`, () => haalWikipedia(a.id)).then((w) => {
         if (!w || !w.tekst) return;
         const alineas = w.tekst.split(/\n+/).map((p) => p.trim()).filter(Boolean).slice(0, 3);
         $("#wiki").innerHTML = alineas.map((p) => `<p>${esc(p)}</p>`).join("") +
@@ -691,7 +955,7 @@
       }).catch((e) => console.warn("Wikipedia niet bereikbaar", e));
     }
     if (!eigenFoto && a.foto && !isEigenFoto(a.foto)) {
-      haalFotoInfo(a.foto).then((info) => {
+      onthoud(`foto:${a.foto}`, () => haalFotoInfo(a.foto)).then((info) => {
         const bron = $("#foto-bron");
         if (!bron || (!info.maker && !info.licentie)) return;
         bron.innerHTML = `Foto: ${esc(info.maker || "onbekende maker")}${info.licentie ? `, ${esc(info.licentie)}` : ""}, via <a href="${commonsPagina(a.foto)}">Wikimedia Commons</a>`;
@@ -699,8 +963,119 @@
     }
   }
 
+  /* ---------- Beheerpagina: token plakken, controleren en verwijderen ---------- */
+
+  const TOKEN_LINK = "https://github.com/settings/personal-access-tokens/new?" + new URLSearchParams({
+    name: "Achtbanensite",
+    description: `Ritten opslaan vanaf ${location.host || "de achtbanensite"}`,
+    target_name: SITE.githubGebruiker,
+    expires_in: "366",
+    contents: "write",
+  });
+
+  // Leest gereden.json en probeert hem terug te schrijven met een sha die zeker niet klopt.
+  // Zegt GitHub "conflict", dan mag het token schrijven. Er verandert niets.
+  async function controleerToken(token) {
+    await github("", {}, token);
+    const b = await haalBestand("data/gereden.json", token);
+    if (!b) return { lezen: true, schrijven: null };
+    try {
+      await schrijfBestand("data/gereden.json", naarBase64(b.tekst), "0".repeat(40), "Controle van het token", token);
+      return { lezen: true, schrijven: true };
+    } catch (e) {
+      if (e.status === 409 || e.status === 422) return { lezen: true, schrijven: true };
+      if (e.status === 403) return { lezen: true, schrijven: false };
+      throw e;
+    }
+  }
+
+  function startBeheer() {
+    const vak = $("#beheer-status");
+    $("#token-link")?.setAttribute("href", TOKEN_LINK);
+    document.querySelectorAll("[data-repo]").forEach((el) => { el.textContent = `${SITE.githubGebruiker}/${SITE.githubRepo}`; });
+    if (!repoBekend) {
+      vak.innerHTML = `<p>Vul eerst je GitHub-gebruikersnaam en de naam van de repository in bij <code>config.js</code>.</p>`;
+      return;
+    }
+
+    function teken(melding) {
+      const token = leesToken();
+      vak.innerHTML = token
+        ? `<p class="beheer-aan"><strong>Beheer staat aan op dit apparaat.</strong> Je ziet nu de knoppen om ritten op te slaan, te bewerken en te verwijderen.</p>
+           <p class="klein">Token: <code>${esc(token.slice(0, 15))}…${esc(token.slice(-4))}</code></p>
+           <div id="token-uitslag" role="status">${melding || ""}</div>
+           <div class="knoppen">
+             <a class="knop" href="./#overzicht">Naar alle achtbanen</a>
+             <button class="knop knop-licht" type="button" id="token-test">Token controleren</button>
+             <button class="knop knop-licht knop-gevaar" type="button" id="token-weg">Token verwijderen</button>
+           </div>
+           <div id="beheer-onbekend"></div>`
+        : `<p><strong>Beheer staat uit op dit apparaat.</strong> Plak je token hieronder. Hoe je dat maakt, staat verderop.</p>
+           <form class="formulier" id="token-form">
+             <label>Je fine-grained token <input type="password" id="token-veld" autocomplete="off" spellcheck="false" placeholder="github_pat_…" required></label>
+             <p class="fout" id="token-fout" role="alert"></p>
+             <div class="knoppen"><button class="knop" type="submit" id="token-opslaan">Token opslaan</button></div>
+           </form>
+           <div id="token-uitslag" role="status">${melding || ""}</div>`;
+
+      if (token) {
+        $("#token-weg").addEventListener("click", () => {
+          if (!confirm("Token van dit apparaat verwijderen? De beheerknoppen verdwijnen dan. Op GitHub blijft het token bestaan tot je het daar verwijdert.")) return;
+          opslag.wis(TOKEN_SLEUTEL);
+          opslag.wis(GESCHREVEN);
+          teken("<p>Het token is van dit apparaat verwijderd. Trek het ook in op GitHub als je het nergens meer gebruikt (zie hieronder).</p>");
+        });
+        $("#token-test").addEventListener("click", (e) => metKnop(e.currentTarget, null, "Controleren…", async () => {
+          $("#token-uitslag").innerHTML = uitslagHtml(await controleerToken(token));
+        }));
+        toonOnbekend();
+        return;
+      }
+
+      $("#token-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const nieuw = $("#token-veld").value.trim();
+        const fout = $("#token-fout");
+        if (/^gh[ps]_/.test(nieuw)) {
+          fout.textContent = "Dit is een klassiek token. Dat geeft toegang tot al je repositories. Maak liever een fine-grained token (begint met github_pat_).";
+          return;
+        }
+        if (!/^github_pat_\w{20,}$/.test(nieuw)) {
+          fout.textContent = "Dit lijkt geen fine-grained token. Zo'n token begint met github_pat_.";
+          return;
+        }
+        await metKnop($("#token-opslaan"), fout, "Controleren…", async () => {
+          const uitslag = await controleerToken(nieuw);
+          if (uitslag.schrijven === false) throw new Error("Het token werkt, maar mag niet schrijven. Zet Contents op Read and write en probeer het opnieuw.");
+          if (!opslag.zet(TOKEN_SLEUTEL, nieuw)) throw new Error("Deze browser laat de site niets bewaren (privévenster?). Gebruik een gewoon venster.");
+          location.reload();
+        });
+      });
+    }
+
+    function uitslagHtml(u) {
+      return `<p class="goed">✓ Het token werkt: toegang tot ${esc(SITE.githubGebruiker)}/${esc(SITE.githubRepo)}.
+        ${u.schrijven ? "Lezen en schrijven mag." : u.schrijven === false ? "</p><p class=\"fout\">Het token mag niet schrijven. Zet Contents op Read and write." : ""}</p>`;
+    }
+
+    async function toonOnbekend() {
+      try {
+        const data = await laadAlles();
+        if (!data.onbekend.length) return;
+        $("#beheer-onbekend").innerHTML = `<p class="fout">${data.onbekend.length} ${meervoud(data.onbekend.length, "rit verwijst", "ritten verwijzen")} naar een achtbaan die niet meer in de lijst staat:
+          ${data.onbekend.map((r) => `<code>${esc(r.id)}</code>`).join(", ")}. Ze tellen niet mee. Kijk of de code in <code>data/gereden.json</code> klopt.</p>`;
+      } catch (e) { /* lijst niet beschikbaar */ }
+    }
+
+    teken();
+  }
+
   /* ---------- Starten ---------- */
   document.querySelectorAll("[data-sitenaam]").forEach((el) => { el.textContent = SITE.naam; });
-  if (document.body.dataset.pagina === "home") { document.title = SITE.naam; startPagina(); }
-  if (document.body.dataset.pagina === "achtbaan") startAchtbaan();
+  if (beheer && PAGINA !== "beheer") {
+    $(".kop nav")?.insertAdjacentHTML("beforeend", '<a href="beheer.html" class="nav-beheer">Beheer</a>');
+  }
+  if (PAGINA === "home") { document.title = SITE.naam; startPagina(); }
+  if (PAGINA === "achtbaan") startAchtbaan();
+  if (PAGINA === "beheer") startBeheer();
 })();

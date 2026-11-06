@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://commons.wikimedia.org https://upload.wikimedia.org https://tile.openstreetmap.org https://raw.githubusercontent.com; connect-src 'self' https://api.github.com https://www.wikidata.org https://*.wikipedia.org https://commons.wikimedia.org; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="robots" content="noindex">
+  <title>Beheer | Rubens Achtbanen</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎢</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Instrument+Sans:ital,wght@0,400;0,600;0,700;1,400&display=swap">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-pagina="beheer">
+  <header class="kop">
+    <a class="logo" href="./" data-sitenaam>Rubens Achtbanen</a>
+    <nav aria-label="Hoofdmenu">
+      <a href="./#kaart-sectie">Kaart</a>
+      <a href="./#overzicht">Alle achtbanen</a>
+    </nav>
+  </header>
+
+  <main id="inhoud" class="beheer">
+    <header class="titel">
+      <div>
+        <h1>Beheer</h1>
+        <p class="plek">Alleen voor jou. Met een token van GitHub sla je ritten rechtstreeks op, zonder kopiëren en plakken.</p>
+      </div>
+    </header>
+
+    <section class="blok">
+      <div class="mijn-rit" id="beheer-status"><p>Laden…</p></div>
+    </section>
+
+    <section class="blok" id="token-maken">
+      <h2>Zo maak je een token</h2>
+      <ol class="stappen">
+        <li>Open op GitHub de pagina voor een nieuw token: <a id="token-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">nieuw fine-grained token maken</a>.
+          Werkt de link niet, ga dan via je profielfoto rechtsboven naar <strong>Settings</strong>, dan helemaal onderaan links <strong>Developer settings</strong>, <strong>Personal access tokens</strong>, <strong>Fine-grained tokens</strong> en <strong>Generate new token</strong>.</li>
+        <li>Geef het token een naam, bijvoorbeeld <em>Achtbanensite telefoon</em>. Kies bij <strong>Expiration</strong> hoe lang hij geldig blijft, bijvoorbeeld een jaar. Daarna maak je gewoon een nieuwe.</li>
+        <li>Kies bij <strong>Resource owner</strong> je eigen account.</li>
+        <li>Kies bij <strong>Repository access</strong> voor <strong>Only select repositories</strong> en selecteer alleen <strong data-repo>RuDeMer/achtbanen</strong>.</li>
+        <li>Zet bij <strong>Permissions</strong> (onder <strong>Repository permissions</strong>, of via <strong>Add permissions</strong>) <strong>Contents</strong> op <strong>Read and write</strong>. GitHub zet er zelf <strong>Metadata: Read-only</strong> bij; dat hoort zo. Laat de rest uit.</li>
+        <li>Klik op <strong>Generate token</strong> en bevestig. Kopieer het token: het begint met <code>github_pat_</code> en GitHub laat het maar één keer zien.</li>
+        <li>Plak het hierboven en kies <strong>Token opslaan</strong>. De site controleert meteen of het token mag lezen en schrijven.</li>
+      </ol>
+      <p class="klein">Het token blijft alleen in deze browser op dit apparaat. Het komt niet in de repository en niet in de code. Wil je ook vanaf je telefoon beheren, plak het daar ook (of maak voor elk apparaat een eigen token, dan kun je er één intrekken zonder de andere).</p>
+    </section>
+
+    <section class="blok">
+      <h2>Token weer verwijderen</h2>
+      <ol class="stappen">
+        <li><strong>Van dit apparaat:</strong> kies hierboven <strong>Token verwijderen</strong>. De beheerknoppen verdwijnen meteen.</li>
+        <li><strong>Helemaal intrekken:</strong> ga op GitHub naar <strong>Settings</strong>, <strong>Developer settings</strong>, <strong>Personal access tokens</strong>, <strong>Fine-grained tokens</strong>, klik op het token en kies onderaan <strong>Delete</strong>. Dan werkt het nergens meer. Doe dit meteen als je telefoon kwijt is of als je denkt dat iemand anders het token heeft.</li>
+      </ol>
+    </section>
+  </main>
+
+  <footer class="voet">
+    <p>Deze pagina staat niet in het menu. Bewaar het adres als bladwijzer.</p>
+  </footer>
+
+  <script src="config.js" defer></script>
+  <script src="assets/site.js" defer></script>
+</body>
+</html>

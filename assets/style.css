@@ -319,18 +319,19 @@ h2 { font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 800; }
 }
 .dialoog::backdrop { background: rgb(11 20 48 / .55); }
 .dialoog h2 { font-size: 2rem; margin-bottom: 1rem; }
-.dialoog label { display: grid; gap: .25rem; margin-bottom: .8rem; font-size: .9rem; color: var(--inkt-zacht); }
-.dialoog input {
+.dialoog label, .formulier label { display: grid; gap: .25rem; margin-bottom: .8rem; font-size: .9rem; color: var(--inkt-zacht); }
+.dialoog input, .dialoog select, .formulier input, .formulier select {
   font: inherit; color: var(--inkt); background: var(--lucht); border: 1px solid var(--lijn);
-  border-radius: 6px; padding: .55rem .7rem;
+  border-radius: 6px; padding: .55rem .7rem; width: 100%; min-width: 0;
 }
+.dialoog input:focus, .dialoog select:focus, .formulier input:focus, .formulier select:focus { border-color: var(--inkt); }
 .dialoog pre {
   background: var(--lucht); border-radius: 6px; padding: .75rem; overflow-x: auto;
   font-size: .85rem; white-space: pre-wrap; word-break: break-word; margin: .25rem 0 1rem;
 }
-.dialoog .knoppen { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: 1rem; }
-.dialoog .klein { font-size: .88rem; color: var(--inkt-zacht); margin: 0; }
-.dialoog .klein code { color: var(--inkt); }
+.dialoog .knoppen, .beheer .knoppen { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: 1rem; }
+.dialoog .klein, .beheer .klein { font-size: .88rem; color: var(--inkt-zacht); margin: 0; }
+.dialoog .klein code, .beheer .klein code { color: var(--inkt); }
 
 .toast {
   position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
@@ -338,3 +339,38 @@ h2 { font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 800; }
   font-weight: 700; z-index: 1000;
 }
 .foto-leeg::after { -webkit-mask-size: 22%; mask-size: 22%; }
+
+/* ---------- beheer (alleen zichtbaar met een token) ---------- */
+
+.kop nav .nav-beheer { color: var(--rail); font-weight: 700; }
+
+.knop:disabled, .knop-klein:disabled { opacity: .6; cursor: progress; }
+.knop-gevaar { color: var(--rail); border-color: var(--rail); }
+.knop-licht.knop-gevaar:hover { background: var(--rail); color: #fff; }
+
+.knop-klein {
+  font: inherit; font-size: .85rem; font-weight: 700; color: var(--inkt);
+  background: transparent; border: 1px solid var(--lijn); border-radius: 6px;
+  padding: .3rem .65rem; cursor: pointer;
+}
+.knop-klein:hover { border-color: var(--inkt); }
+.knop-klein.knop-gevaar { color: var(--rail); border-color: var(--rail-zacht); }
+.knop-klein.knop-gevaar:hover { border-color: var(--rail); }
+
+.ritten-beheer { list-style: none; padding: 0; }
+.ritten-beheer li {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem 1rem;
+  padding: .5rem 0; border-bottom: 1px solid var(--lijn);
+}
+.knoppen-klein { display: flex; gap: .4rem; }
+
+.fout { color: var(--rail); font-weight: 600; margin: 0 0 .6rem; }
+.fout:empty { display: none; }
+.goed { font-weight: 600; margin: 0 0 .6rem; }
+
+.beheer .titel { margin-top: 0; }
+.beheer .plek { max-width: 50ch; }
+.beheer .formulier { max-width: 32rem; margin-top: 1rem; }
+.stappen { margin: 0 0 1rem; padding-left: 1.4rem; max-width: 68ch; }
+.stappen li { margin-bottom: .6rem; }
+.stappen li::marker { font-family: var(--kop); font-weight: 800; color: var(--rail); }
