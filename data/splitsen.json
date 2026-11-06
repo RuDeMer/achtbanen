@@ -1,0 +1,8 @@
+{
+  "uitleg": "Achtbanen die in de bronnen als één baan staan, maar uit losse sporen bestaan. Elk spoor wordt op de site een eigen achtbaan, met id <id>-1, <id>-2, enzovoort. Een rit op de hele baan telt voor elk spoor. Splitsen kan ook met de knop Splitsen op de pagina van de baan (beheer).",
+  "splitsen": [
+    { "id": "Q319742", "sporen": ["Winja's Fear", "Winja's Force"] },
+    { "id": "Q1130871", "sporen": ["Joris en de Draak (Water)", "Joris en de Draak (Vuur)"] },
+    { "id": "Q59799476", "sporen": ["Max & Moritz (Max)", "Max & Moritz (Moritz)"] }
+  ]
+}

@@ -9,6 +9,8 @@ Alle achtbanen van de wereld op één site, met een teller van de achtbanen die 
 | `config.js` | Naam van de site en je GitHub-gegevens. Het enige bestand dat je hoeft aan te passen. |
 | `data/gereden.json` | Jouw credits. De site schrijft hier zelf in als je beheer aanzet; met de hand kan ook. |
 | `data/extra.json` | Achtbanen die niet in Wikidata of OpenStreetMap staan. |
+| `data/splitsen.json` | Banen met meer sporen (zoals Joris en de Draak), die per spoor als eigen achtbaan tellen. |
+| `data/verborgen.json` | Wat niet op de site komt, omdat het geen achtbaan is of dubbel staat. |
 | `data/achtbanen.json` | Wordt automatisch gemaakt. Niet zelf aanpassen. Valt onder de ODbL (zie Bronnen). |
 | `data/details.json` | Bestaat alleen als `achtbanen.json` groter zou worden dan 3 MB. Ook automatisch. |
 | `fotos/` | Je eigen foto's. |
@@ -48,6 +50,7 @@ Goed om te weten: alle GitHub Pages-sites van één account delen hetzelfde adre
 - **Afvinken** in het overzicht (zie hieronder).
 - **Achtbaan ontbreekt**: een achtbaan toevoegen aan `data/extra.json`.
 - **Eigen foto** bij een rit, rechtstreeks vanaf je telefoon.
+- **Splitsen in losse sporen** en **Verbergen**, onderaan de pagina van een baan (zie hieronder).
 
 Alles wordt meteen opgeslagen in de repository. Jij ziet de wijziging direct; bezoekers na een paar minuten, als GitHub de site opnieuw heeft gepubliceerd. Heeft iets anders het bestand net gewijzigd, dan haalt de site het opnieuw op en probeert het nog eens, zodat er niets verloren gaat.
 
@@ -72,6 +75,20 @@ Het kan nog steeds zonder beheer: open `data/gereden.json` op GitHub en zet er e
 ```
 
 Alleen `id` is verplicht. De code staat in het adres van de attractiepagina (`Q…` voor Wikidata, `osm-way-…` voor OpenStreetMap, `x-…` voor je eigen achtbanen). Een datum mag ook alleen een jaar zijn (`"2006"`). Een komma na de laatste regel is geen probleem. Heb je een achtbaan vaker gereden, zet hem er dan nog een keer in.
+
+## Banen met meer sporen
+
+Sommige banen staan in Wikidata en OpenStreetMap als één baan, maar zijn er eigenlijk twee, zoals een duelachtbaan. In `data/splitsen.json` staat welke banen per spoor tellen. Al ingevuld: Winja's Fear & Force, Joris en de Draak (Water en Vuur) en Max & Moritz (Max en Moritz).
+
+Zelf splitsen: open de baan en kies onderaan **Splitsen in losse sporen**. Geef elk spoor een naam. Elk spoor wordt dan een eigen achtbaan met een eigen code (`Q1130871-1`, `Q1130871-2`). Had je de baan al gereden, dan telt die rit voor elk spoor. Heb je één spoor niet gereden, verwijder dan de rit op de pagina van dat spoor. Ziet OpenStreetMap ergens sporen met een eigen naam, dan staat dat als voorstel op de beheerpagina.
+
+Ongedaan maken: haal de regel weg uit `data/splitsen.json`.
+
+## Wat geen achtbaan is
+
+OpenStreetMap noemt soms ook andere dingen een achtbaan. Het script laat bij banen die alleen in OpenStreetMap staan dit weg: losse stations, zomerrodelbanen en alpine coasters, waterattracties en andere attracties (darkrides, treintjes, speelplaatsen), dingen waarvan de Wikidata-koppeling zegt dat het geen achtbaan is, en banen buiten een pretpark zonder RCDB-nummer. VR-versies, zoals EuroSat Coastiality, horen bij de echte baan: een rit erop telt voor die baan.
+
+Staat er nog iets tussen wat geen achtbaan is, of dubbel staat: open het en kies onderaan **Verbergen**. Het komt dan in `data/verborgen.json` en verdwijnt van de site. Terugzetten kan op de beheerpagina. Banen die je hebt gereden kun je niet verbergen; verwijder dan eerst je rit.
 
 ## Een achtbaan die niet in de lijst staat
 
@@ -98,7 +115,9 @@ Het script draait elke eerste dag van de maand. Wil je niet wachten: ga naar **A
 1. **Wikidata**: alle achtbanen met naam, park, land, cijfers en foto. Het script probeert Wikidata v2, dan v1, dan QLever.
 2. **OpenStreetMap**: één grote vraag aan de Overpass API voor alle objecten met `attraction=roller_coaster`, plus de parkgebieden (`tourism=theme_park`). Met een nette User-Agent, twee reserve-servers, en opnieuw proberen bij drukte. Alles samen hooguit 25 minuten; daarna blijven de OSM-gegevens van de vorige keer staan.
 3. **Samenvoegen**: een OSM-object hoort bij een Wikidata-achtbaan via de `wikidata`-tag, of op naam plus afstand: 300 meter, of 1,5 km als de naam precies gelijk is (Wikidata zet een baan vaak midden in het park). Het park komt uit het omringende parkgebied; liggen er gebieden in elkaar, dan gaat het gebied met een Wikidata-koppeling voor. Meerdere OSM-objecten van één achtbaan (spoor en station) worden één. Achtbanen die alleen in OSM staan krijgen een vaste code zoals `osm-way-123`.
-4. **Foto's**, in deze volgorde: Wikidata P18, een geschikte foto uit de Commons-categorie (P373), de vrij gelicenseerde hoofdafbeelding van het Wikipedia-artikel, de `image`- of `wikimedia_commons`-tag uit OSM. Elke foto wordt bij Commons gecontroleerd: hij moet er echt staan, met een vrije licentie. Alleen de bestandsnaam wordt bewaard; de site toont bij elke foto de maker en de licentie.
+4. **Foto's**, in deze volgorde: Wikidata P18, een geschikte foto uit de Commons-categorie (P373), de vrij gelicenseerde hoofdafbeelding van het Wikipedia-artikel, de `image`- of `wikimedia_commons`-tag uit OSM, en als laatste een foto op Commons met de naam van de baan én van het park in de bestandsnaam. Elke foto wordt bij Commons gecontroleerd: hij moet er echt staan, met een vrije licentie. Alleen de bestandsnaam wordt bewaard; de site toont bij elke foto de maker en de licentie.
+
+Wil je zien wat het script heeft weggelaten en waarom, draai het dan met `ACHTBANEN_UITLEG=1 python3 scripts/haal_achtbanen.py`.
 
 Beveiligingen:
 - Lukt Wikidata niet, dan blijft de oude lijst staan.
