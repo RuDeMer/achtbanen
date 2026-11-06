@@ -1,0 +1,4 @@
+Zet hier je eigen foto's neer, bijvoorbeeld baron-1898.jpg.
+Verwijs ernaar in data/gereden.json met "foto": "fotos/baron-1898.jpg".
+Je eigen foto krijgt dan voorrang boven de foto van Wikimedia Commons.
+Tip: maak foto's eerst kleiner (zo'n 1600 pixels breed) zodat de site snel blijft.

@@ -1,0 +1,340 @@
+/* Rubens Achtbanen — vormgeving
+   Kleuren: lucht (achtergrond), inkt (tekst), rail (rood baanspoor = gereden). */
+
+:root {
+  --lucht: #e6eff9;
+  --lucht-diep: #d4e2f2;
+  --papier: #ffffff;
+  --inkt: #13203f;
+  --inkt-zacht: #4b5a7a;
+  --lijn: #c3d2e6;
+  --steun: #a6b9d4;
+  --rail: #cf2236;
+  --rail-zacht: #fbe3e6;
+
+  --kop: "Big Shoulders Display", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --tekst: "Instrument Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --breed: 76rem;
+  --rand: 8px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --lucht: #0b1430;
+    --lucht-diep: #121e45;
+    --papier: #15224b;
+    --inkt: #edf2fb;
+    --inkt-zacht: #a8b5d3;
+    --lijn: #2a3a6b;
+    --steun: #34477b;
+    --rail: #ff5468;
+    --rail-zacht: #3b1c34;
+    color-scheme: dark;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--lucht);
+  color: var(--inkt);
+  font: 1.0625rem/1.6 var(--tekst);
+  -webkit-font-smoothing: antialiased;
+}
+
+img { max-width: 100%; display: block; }
+
+a { color: inherit; text-decoration-color: var(--rail); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+a:hover { color: var(--rail); }
+
+:focus-visible { outline: 3px solid var(--rail); outline-offset: 3px; border-radius: 2px; }
+
+h1, h2, h3 { font-family: var(--kop); line-height: 1; margin: 0; letter-spacing: .005em; }
+h2 { font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 800; }
+
+.sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+.overslaan { position: absolute; left: 1rem; top: -4rem; background: var(--inkt); color: var(--lucht); padding: .6rem 1rem; z-index: 10; }
+.overslaan:focus { top: 1rem; }
+
+.binnen { width: min(100% - 2.5rem, var(--breed)); margin-inline: auto; }
+
+/* ---------- kop ---------- */
+
+.kop {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .25rem 1rem;
+  width: min(100% - 2.5rem, var(--breed)); margin: 0 auto; padding: 1.25rem 0;
+}
+.logo { font-family: var(--kop); font-weight: 800; font-size: 1.6rem; text-decoration: none; white-space: nowrap; }
+.kop nav { display: flex; gap: 1.1rem; font-size: .95rem; white-space: nowrap; }
+.kop nav a { text-decoration: none; color: var(--inkt-zacht); }
+.kop nav a:hover { color: var(--rail); }
+
+/* ---------- held: de teller op de baan ---------- */
+
+.held { padding-top: clamp(1rem, 4vw, 3rem); }
+.held-tekst { width: min(100% - 2.5rem, var(--breed)); margin: 0 auto; }
+
+.teller {
+  font-family: var(--kop); font-weight: 900;
+  font-size: clamp(7rem, 26vw, 17rem); line-height: .78;
+  margin: 0; letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums;
+}
+.teller-uitleg {
+  font-family: var(--kop); font-weight: 800;
+  font-size: clamp(1.7rem, 4.6vw, 3rem); line-height: 1; margin: .6rem 0 0;
+}
+.teller-sub { margin: .5rem 0 0; color: var(--inkt-zacht); max-width: 38ch; }
+
+.baan {
+  display: block; width: 100%; margin: clamp(-3rem, -4vw, -1rem) 0 0; padding: 0;
+  border: 0; background: none; cursor: pointer; color: inherit;
+}
+.baan svg { display: block; width: 100%; height: auto; overflow: visible; }
+.baan:focus-visible { outline-offset: -3px; }
+.baan-bielzen { fill: none; stroke: var(--rail); stroke-width: 15; stroke-dasharray: 2.5 9; opacity: .55; }
+.baan-rails { fill: none; stroke: var(--rail); stroke-width: 9; stroke-linecap: round; stroke-linejoin: round; }
+.baan-gat { fill: none; stroke: var(--lucht); stroke-width: 4.5; stroke-linecap: round; stroke-linejoin: round; }
+#steunen line { stroke: var(--steun); stroke-width: 3; }
+#trein rect { fill: var(--inkt); }
+#trein { opacity: 0; }
+@media (max-width: 40rem) {
+  .baan-rails { stroke-width: 15; }
+  .baan-gat { stroke-width: 7; }
+  .baan-bielzen { stroke-width: 24; stroke-dasharray: 4 14; }
+  #steunen line { stroke-width: 5; }
+}
+
+/* ---------- feiten ---------- */
+
+.feiten {
+  width: min(100% - 2.5rem, var(--breed)); margin: 0 auto; padding: 2rem 0 0;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  border-top: 2px solid var(--inkt);
+}
+.feit { display: grid; gap: .1rem; padding: .25rem 1.25rem 1rem 0; text-decoration: none; }
+.feit-label { color: var(--inkt-zacht); font-size: .9rem; }
+.feit-waarde { font-family: var(--kop); font-weight: 800; font-size: 2.4rem; line-height: 1; }
+.feit-naam { font-size: .95rem; text-decoration: underline; text-decoration-color: var(--rail); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.feit:hover .feit-waarde { color: var(--rail); }
+@media (max-width: 40rem) {
+  .feiten { grid-template-columns: 1fr 1fr; }
+  .feit-waarde { font-size: 1.9rem; }
+}
+
+/* ---------- kaart van gereden achtbanen ---------- */
+
+.kaart-sectie { width: min(100% - 2.5rem, var(--breed)); margin: 3.5rem auto 0; }
+.kaart-sectie h2 { margin-bottom: 1rem; }
+.kaart-vak, .minikaart {
+  height: clamp(18rem, 45vw, 28rem); border-radius: var(--rand);
+  border: 1px solid var(--lijn); background: var(--lucht-diep); z-index: 0;
+}
+.minikaart { height: 18rem; }
+.leaflet-container { font: .95rem/1.4 var(--tekst); }
+.leaflet-popup-content a { font-weight: 700; }
+.popup-park { font-family: var(--kop); font-weight: 800; font-size: 1.2rem; margin: 0 0 .25rem; }
+.popup-lijst { margin: 0; padding-left: 1.1rem; }
+@media (prefers-color-scheme: dark) {
+  .leaflet-tile-pane { filter: invert(1) hue-rotate(185deg) brightness(.85) contrast(.9); }
+}
+
+/* ---------- overzicht ---------- */
+
+.overzicht { width: min(100% - 2.5rem, var(--breed)); margin: 4rem auto 0; }
+.overzicht-kop { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .5rem 1rem; }
+.aantal-resultaten { margin: 0; color: var(--inkt-zacht); }
+
+.filters {
+  display: grid; gap: .75rem; margin: 1.25rem 0 1rem;
+  grid-template-columns: 1fr 1fr;
+}
+.filters label { display: grid; gap: .25rem; font-size: .85rem; color: var(--inkt-zacht); }
+.zoekveld { grid-column: 1 / -1; }
+.filters input[type="search"], .filters select {
+  font: inherit; font-size: 1rem; color: var(--inkt);
+  background: var(--papier); border: 1px solid var(--lijn); border-radius: 6px;
+  padding: .65rem .75rem; width: 100%; min-width: 0;
+}
+.filters input[type="search"] { padding-inline: 1rem; }
+.filters input[type="search"]:focus, .filters select:focus { border-color: var(--inkt); }
+.filters .vinkje {
+  display: flex; align-items: center; gap: .5rem; align-self: end;
+  font-size: 1rem; color: var(--inkt); padding: .65rem 0;
+}
+.vinkje input { width: 1.2rem; height: 1.2rem; accent-color: var(--rail); margin: 0; }
+
+@media (min-width: 52rem) {
+  .filters { grid-template-columns: minmax(16rem, 2fr) repeat(3, minmax(9rem, 1fr)) auto; align-items: end; }
+  .zoekveld { grid-column: auto; }
+}
+
+.chip {
+  display: inline-flex; align-items: center; gap: .5rem; margin: 0 0 1rem;
+  font: inherit; font-size: .95rem; color: var(--inkt);
+  background: var(--rail-zacht); border: 1px solid var(--rail); border-radius: 999px;
+  padding: .35rem .9rem; cursor: pointer;
+}
+.chip span[aria-hidden] { font-size: 1.1rem; line-height: 1; color: var(--rail); }
+
+.raster {
+  display: grid; gap: 1.25rem 1rem; margin-top: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14.5rem), 1fr));
+}
+
+.kaart {
+  position: relative; display: flex; flex-direction: column;
+  background: var(--papier); border: 1px solid var(--lijn); border-radius: var(--rand);
+  overflow: hidden; text-decoration: none;
+}
+.kaart:hover { border-color: var(--inkt); color: inherit; }
+.kaart:hover .kaart-naam { text-decoration: underline; text-decoration-color: var(--rail); }
+.kaart.is-gereden { border-color: var(--rail); }
+.kaart.is-gereden::before {
+  content: ""; position: absolute; inset: 0 0 auto; height: 5px; z-index: 2;
+  background: repeating-linear-gradient(90deg, var(--rail) 0 10px, transparent 10px 13px);
+}
+
+.kaart-foto { position: relative; aspect-ratio: 4 / 3; background: var(--lucht-diep); }
+.kaart-foto::after, .foto-leeg::after {
+  content: ""; position: absolute; inset: 0; background: var(--steun);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 60'%3E%3Cpath d='M2 52h14c6 0 8-2 12-8L46 14c3-5 7-5 9 0l10 30c2 5 6 7 10 2l7-9c3-3 6-3 9 0l7 9c3 4 6 6 10 6h10' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 45% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 60'%3E%3Cpath d='M2 52h14c6 0 8-2 12-8L46 14c3-5 7-5 9 0l10 30c2 5 6 7 10 2l7-9c3-3 6-3 9 0l7 9c3 4 6 6 10 6h10' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 45% no-repeat;
+}
+.kaart-foto img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+
+.kaart-tekst { display: grid; gap: .15rem; padding: .75rem .9rem 1rem; }
+.kaart-naam { font-family: var(--kop); font-weight: 800; font-size: 1.45rem; line-height: 1.05; }
+.kaart-plek { font-size: .95rem; }
+.kaart-meta { font-size: .85rem; color: var(--inkt-zacht); }
+.kaart-rit { font-size: .85rem; font-weight: 700; color: var(--rail); }
+
+.meer, .knop {
+  font: inherit; font-weight: 700; color: var(--lucht); background: var(--inkt);
+  border: 0; border-radius: 6px; padding: .8rem 1.3rem; cursor: pointer;
+  text-decoration: none; display: inline-block;
+}
+.meer { display: block; margin: 2rem auto 0; }
+.meer:hover, .knop:hover { background: var(--rail); color: #fff; }
+.knop-licht { background: transparent; color: var(--inkt); border: 1px solid var(--inkt); }
+.knop-licht:hover { background: var(--inkt); color: var(--lucht); }
+
+.leeg { padding: 3rem 0; max-width: 36rem; }
+.leeg p { margin: 0 0 1rem; }
+
+.melding { width: min(100% - 2.5rem, 44rem); margin: 3rem auto; padding: 1.5rem; background: var(--papier); border: 1px solid var(--rail); border-radius: var(--rand); }
+.melding h1 { font-size: 2.2rem; margin-bottom: .75rem; }
+.melding code { font-size: .9em; }
+
+/* ---------- voet ---------- */
+
+.voet {
+  width: min(100% - 2.5rem, var(--breed)); margin: 5rem auto 0; padding: 1.5rem 0 3rem;
+  border-top: 1px solid var(--lijn); color: var(--inkt-zacht); font-size: .9rem;
+}
+.voet p { margin: 0 0 .4rem; max-width: 70ch; }
+
+/* ---------- achtbaanpagina ---------- */
+
+.terug { width: min(100% - 2.5rem, var(--breed)); margin: 0 auto 1rem; font-size: .95rem; }
+.terug a { color: var(--inkt-zacht); }
+
+.foto-groot { margin: 0 auto; width: min(100%, var(--breed)); position: relative; }
+.foto-groot img, .foto-leeg {
+  width: 100%; aspect-ratio: 16 / 9; max-height: 72vh; object-fit: cover;
+  background: var(--lucht-diep);
+}
+.foto-leeg { position: relative; }
+.foto-groot figcaption { width: min(100% - 2.5rem, var(--breed)); margin: .4rem auto 0; font-size: .8rem; color: var(--inkt-zacht); }
+@media (min-width: 78rem) {
+  .foto-groot img, .foto-leeg { border-radius: var(--rand); }
+  .foto-groot figcaption { width: 100%; }
+}
+
+.titel {
+  width: min(100% - 2.5rem, var(--breed)); margin: 1.75rem auto 0;
+  display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 1.25rem 2rem;
+}
+.titel h1 { font-size: clamp(3rem, 9vw, 6rem); font-weight: 900; line-height: .9; }
+.plek { margin: .6rem 0 0; font-size: 1.15rem; }
+.status { margin: .35rem 0 0; color: var(--inkt-zacht); }
+.status-gesloten { color: var(--rail); }
+
+.stempel {
+  font-family: var(--kop); font-weight: 900; font-size: 2.2rem; line-height: 1;
+  color: var(--rail); border: 3px solid var(--rail); border-radius: 10px;
+  padding: .55rem 1rem .6rem; transform: rotate(-3deg); text-align: center;
+}
+.stempel small { display: block; font-family: var(--tekst); font-weight: 700; font-size: .85rem; margin-top: .3rem; }
+.stempel.is-nog-niet { color: var(--inkt-zacht); border-color: var(--lijn); border-style: dashed; transform: none; font-size: 1.6rem; }
+
+.specs {
+  width: min(100% - 2.5rem, var(--breed)); margin: 2.25rem auto 0; padding: 1.25rem 0 0;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: 1.25rem 1rem;
+  border-top: 2px solid var(--inkt);
+}
+.specs div { display: flex; flex-direction: column-reverse; justify-content: flex-start; }
+.specs dt { color: var(--inkt-zacht); font-size: .9rem; }
+.specs dd { margin: 0; font-family: var(--kop); font-weight: 800; font-size: 2.3rem; line-height: 1.05; }
+.specs dd.tekstwaarde { font-size: 1.5rem; line-height: 1.15; }
+
+.twee {
+  width: min(100% - 2.5rem, var(--breed)); margin: 3rem auto 0;
+  display: grid; gap: 2.5rem;
+}
+@media (min-width: 60rem) { .twee { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); } }
+.over[hidden] + .plaats { grid-column: 1 / -1; }
+.twee h2, .blok h2 { font-size: 1.9rem; margin-bottom: .75rem; }
+.over p { margin: 0 0 1em; max-width: 68ch; }
+.bron-klein { font-size: .85rem; color: var(--inkt-zacht); }
+
+.blok { width: min(100% - 2.5rem, var(--breed)); margin: 3rem auto 0; }
+
+.mijn-rit { background: var(--papier); border: 1px solid var(--lijn); border-radius: var(--rand); padding: 1.25rem 1.4rem; }
+.mijn-rit p { margin: 0 0 .6rem; max-width: 65ch; }
+.mijn-rit .notitie { font-size: 1.2rem; }
+.ritten { margin: 0 0 .75rem; padding-left: 1.2rem; }
+
+.park-lijst { list-style: none; margin: 0; padding: 0; columns: 16rem; column-gap: 2rem; }
+.park-lijst li { break-inside: avoid; padding: .35rem 0; border-bottom: 1px solid var(--lijn); display: flex; justify-content: space-between; gap: 1rem; }
+.park-lijst .vink { color: var(--rail); font-weight: 700; white-space: nowrap; }
+.park-lijst .dicht { color: var(--inkt-zacht); font-size: .85rem; white-space: nowrap; }
+
+.links { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; padding: 0; margin: 0; list-style: none; }
+
+/* ---------- venster: rit toevoegen ---------- */
+
+.dialoog {
+  width: min(100% - 2rem, 34rem); border: 0; border-radius: 12px; padding: 1.5rem;
+  background: var(--papier); color: var(--inkt);
+}
+.dialoog::backdrop { background: rgb(11 20 48 / .55); }
+.dialoog h2 { font-size: 2rem; margin-bottom: 1rem; }
+.dialoog label { display: grid; gap: .25rem; margin-bottom: .8rem; font-size: .9rem; color: var(--inkt-zacht); }
+.dialoog input {
+  font: inherit; color: var(--inkt); background: var(--lucht); border: 1px solid var(--lijn);
+  border-radius: 6px; padding: .55rem .7rem;
+}
+.dialoog pre {
+  background: var(--lucht); border-radius: 6px; padding: .75rem; overflow-x: auto;
+  font-size: .85rem; white-space: pre-wrap; word-break: break-word; margin: .25rem 0 1rem;
+}
+.dialoog .knoppen { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: 1rem; }
+.dialoog .klein { font-size: .88rem; color: var(--inkt-zacht); margin: 0; }
+.dialoog .klein code { color: var(--inkt); }
+
+.toast {
+  position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
+  background: var(--inkt); color: var(--lucht); padding: .7rem 1.1rem; border-radius: 8px;
+  font-weight: 700; z-index: 1000;
+}
+.foto-leeg::after { -webkit-mask-size: 22%; mask-size: 22%; }
