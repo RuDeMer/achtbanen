@@ -117,6 +117,8 @@ Het script draait elke eerste dag van de maand. Wil je niet wachten: ga naar **A
 3. **Samenvoegen**: een OSM-object hoort bij een Wikidata-achtbaan via de `wikidata`-tag, of op naam plus afstand: 300 meter, of 1,5 km als de naam precies gelijk is (Wikidata zet een baan vaak midden in het park). Het park komt uit het omringende parkgebied; liggen er gebieden in elkaar, dan gaat het gebied met een Wikidata-koppeling voor. Meerdere OSM-objecten van één achtbaan (spoor en station) worden één. Achtbanen die alleen in OSM staan krijgen een vaste code zoals `osm-way-123`.
 4. **Foto's**, in deze volgorde: Wikidata P18, een geschikte foto uit de Commons-categorie (P373), de vrij gelicenseerde hoofdafbeelding van het Wikipedia-artikel, de `image`- of `wikimedia_commons`-tag uit OSM, en als laatste een foto op Commons met de naam van de baan én van het park in de bestandsnaam. Elke foto wordt bij Commons gecontroleerd: hij moet er echt staan, met een vrije licentie. Alleen de bestandsnaam wordt bewaard; de site toont bij elke foto de maker en de licentie.
 
+Wil je zien wat het script heeft weggelaten en waarom, draai het dan met `ACHTBANEN_UITLEG=1 python3 scripts/haal_achtbanen.py`.
+
 Beveiligingen:
 - Lukt Wikidata niet, dan blijft de oude lijst staan.
 - Lukt alleen OpenStreetMap niet, dan blijven de OSM-gegevens van de vorige keer staan.
