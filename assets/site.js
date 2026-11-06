@@ -125,7 +125,7 @@
   function regelJson(o) {
     if (!o || typeof o !== "object" || Array.isArray(o)) return JSON.stringify(o);
     return `{ ${Object.entries(o).filter(([, v]) => v !== undefined)
-      .map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(", ")} }`;
+      .map(([k, v]) => `${JSON.stringify(k)}: ${Array.isArray(v) ? `[${v.map((x) => JSON.stringify(x)).join(", ")}]` : JSON.stringify(v)}`).join(", ")} }`;
   }
   function netteJson(data, lijstSleutel) {
     const delen = Object.entries(data).map(([k, v]) => {
@@ -276,20 +276,51 @@
   let geladen = null;
   function laadAlles() {
     geladen = geladen || (async () => {
-      const [basis, extra, mijn] = await Promise.all([
+      const [basis, extra, mijn, splitsBestand, verborgenBestand] = await Promise.all([
         haalJson("data/achtbanen.json", true),
         laadEigen("data/extra.json"),
         laadEigen("data/gereden.json"),
+        laadEigen("data/splitsen.json"),
+        laadEigen("data/verborgen.json"),
       ]);
       // Verwijzingen: oude ids (bijvoorbeeld een OSM-baan die nu in Wikidata staat, of een
       // regel uit extra.json die nu in de bronnen staat) wijzen naar de achtbaan van nu
       const aliassen = basis.aliassen || {};
-      const lijst = [...(basis.achtbanen || []), ...((extra && extra.achtbanen) || []).filter((a) => a && !aliassen[a.id])]
+      let lijst = [...(basis.achtbanen || []), ...((extra && extra.achtbanen) || []).filter((a) => a && !aliassen[a.id])]
         .filter((a) => a && a.id && a.naam);
+
+      // Banen met losse sporen (data/splitsen.json): elk spoor wordt een eigen achtbaan,
+      // met id <id>-1, <id>-2, ... Een rit op de hele baan telt voor elk spoor.
+      const splitsen = new Map();
+      for (const s of (splitsBestand && splitsBestand.splitsen) || []) {
+        if (s && s.id && Array.isArray(s.sporen) && s.sporen.length >= 2) splitsen.set(s.id, s.sporen.map(String));
+      }
+      const sporenVan = new Map();
+      lijst = lijst.flatMap((a) => {
+        const namen = splitsen.get(a.id);
+        if (!namen) return [a];
+        const sporen = namen.map((naam, i) => ({
+          ...a, id: `${a.id}-${i + 1}`, naam, deelVan: a.id, heleNaam: a.naam, spoor: i + 1,
+          wikidata: /^Q\d+$/.test(a.id) ? a.id : a.wikidata,
+        }));
+        sporenVan.set(a.id, sporen);
+        return sporen;
+      });
+
+      // Verborgen banen (data/verborgen.json): geen achtbaan, of dubbel
+      const verborgen = new Map(((verborgenBestand && verborgenBestand.verborgen) || []).filter((v) => v && v.id).map((v) => [v.id, v]));
+      const verborgenBanen = new Map(lijst.filter((a) => verborgen.has(a.id)).map((a) => [a.id, a]));
+      lijst = lijst.filter((a) => !verborgen.has(a.id));
+
       const perId = new Map(lijst.map((a) => [a.id, a]));
+      for (const [id, sporen] of sporenVan) if (!perId.has(id) && perId.has(sporen[0].id)) perId.set(id, sporen[0]);
       for (const [oud, nieuw] of Object.entries(aliassen)) if (!perId.has(oud) && perId.has(nieuw)) perId.set(oud, perId.get(nieuw));
-      for (const a of lijst) a._zoek = zoekbaar([a.naam, a.park, a.land, a.fabrikant, a.type].join(" "));
-      const data = { lijst, perId, bijgewerkt: basis.bijgewerkt, details: basis.details, extra: (extra && extra.achtbanen) || [] };
+      for (const a of lijst) a._zoek = zoekbaar([a.naam, a.heleNaam, a.park, a.land, a.fabrikant, a.type].join(" "));
+      const data = {
+        lijst, perId, aliassen, sporenVan, verborgen, verborgenBanen, echteIds: new Set(lijst.map((a) => a.id)),
+        voorstellen: basis.splitsvoorstellen || {},
+        bijgewerkt: basis.bijgewerkt, details: basis.details, extra: (extra && extra.achtbanen) || [],
+      };
       zetRitten(data, (mijn && mijn.gereden) || []);
       if (apiWaarschuwing) setTimeout(() => toast(apiWaarschuwing, true), 400);
       return data;
@@ -303,9 +334,9 @@
     data.onbekend = [];
     for (const a of data.lijst) { delete a.ritten; delete a.rit; delete a.creditDatum; delete a.laatsteDatum; }
     for (const rit of data.ritten) {
-      const a = data.perId.get(rit.id);
-      if (!a) { data.onbekend.push(rit); continue; }
-      (a.ritten = a.ritten || []).push(rit);
+      const banen = banenVanRit(data, rit.id);
+      if (!banen.length) { data.onbekend.push(rit); continue; }
+      for (const a of banen) (a.ritten = a.ritten || []).push(rit);
     }
     for (const a of data.lijst) {
       if (!a.ritten) continue;
@@ -321,6 +352,16 @@
     }
     data.gereden = data.lijst.filter((a) => a.rit);
     if (data.onbekend.length) console.warn("Deze codes uit gereden.json staan niet in de lijst:", data.onbekend.map((r) => r.id));
+  }
+
+  // Bij welke achtbaan (of welke sporen) hoort een rit? Een rit op een gesplitste baan
+  // telt voor elk spoor; een oude id volgt de verwijzing.
+  function banenVanRit(data, id) {
+    const doel = data.aliassen[id] && !data.echteIds.has(id) ? data.aliassen[id] : id;
+    if (data.sporenVan.has(doel)) return data.sporenVan.get(doel).filter((s) => data.perId.get(s.id) === s);
+    if (data.sporenVan.has(id)) return data.sporenVan.get(id).filter((s) => data.perId.get(s.id) === s);
+    const a = data.perId.get(id);
+    return a ? [a] : [];
   }
 
   async function bewaarRitten(data, wijzig, bericht) {
@@ -881,7 +922,8 @@
 
   function bronnenHtml(a) {
     const links = [];
-    if (/^Q\d+$/.test(a.id)) links.push(`<a href="https://www.wikidata.org/wiki/${a.id}">Wikidata</a>`);
+    const q = wikidataVan(a);
+    if (q) links.push(`<a href="https://www.wikidata.org/wiki/${q}">Wikidata</a>`);
     if (a.rcdb) links.push(`<a href="https://rcdb.com/${encodeURIComponent(a.rcdb)}.htm">RCDB</a>`);
     const osm = /^(node|way|relation)\/\d+$/.test(a.osm || "") ? a.osm
       : /^osm-(node|way|relation)-\d+$/.test(a.id) ? a.id.slice(4).replace("-", "/") : "";
@@ -1052,7 +1094,9 @@
         }
         await bewaarRitten(data, (lijst) => {
           if (!oud) return [...lijst, rit];
-          const i = vindRit(lijst, oud);
+          const eigen = ritVoorDitSpoor(data, lijst, oud, a);
+          if (eigen !== oud) rit.id = a.id;
+          const i = vindRit(lijst, eigen);
           if (i < 0) throw new Error("Deze rit is intussen op een andere plek gewijzigd. Laad de pagina opnieuw en probeer het nog eens.");
           lijst[i] = rit;
           return lijst;
@@ -1123,7 +1167,7 @@
     if (!confirm(`Deze rit op ${a.naam} verwijderen?\n${ritOmschrijving(rit)}`)) return;
     const gelukt = await metKnop(knop, null, "Bezig…", () =>
       bewaarRitten(data, (lijst) => {
-        const i = vindRit(lijst, rit);
+        const i = vindRit(lijst, ritVoorDitSpoor(data, lijst, rit, a));
         if (i < 0) throw new Error("Deze rit staat niet meer in gereden.json. Laad de pagina opnieuw.");
         lijst.splice(i, 1);
         return lijst;
@@ -1258,6 +1302,133 @@
     });
   }
 
+  /* ---------- Sporen en verbergen (beheer) ---------- */
+
+  const wikidataVan = (a) => (/^Q\d+$/.test(a.wikidata || "") ? a.wikidata : /^Q\d+$/.test(a.id) ? a.id : "");
+
+  function sporenHtml(a, data) {
+    const sporen = data.sporenVan.get(a.deelVan) || [];
+    const andere = sporen.filter((s) => s !== a && data.perId.get(s.id) === s);
+    return `<p class="spoor-info">Spoor ${a.spoor} van ${sporen.length} van ${esc(a.heleNaam)}${andere.length
+      ? `. Ook: ${andere.map((s) => `<a href="${pagina(s)}">${esc(s.naam)}</a>`).join(", ")}` : ""}</p>`;
+  }
+
+  // Een rit op de hele baan telt voor elk spoor. Bewerk of verwijder je hem bij één spoor,
+  // dan wordt hij eerst een rit per spoor; daarna verandert alleen die van dit spoor.
+  function ritVoorDitSpoor(data, lijst, rit, a) {
+    if (!a.deelVan || rit.id === a.id) return rit;
+    const sporen = banenVanRit(data, rit.id);
+    if (sporen.length < 2) return rit;
+    const i = vindRit(lijst, rit);
+    if (i < 0) return rit;
+    const kopieen = sporen.map((s) => ({ ...rit, id: s.id }));
+    lijst.splice(i, 1, ...kopieen);
+    return kopieen.find((k) => k.id === a.id) || rit;
+  }
+
+  function beheerBlokHtml(a, data) {
+    if (data.verborgen.has(a.id)) {
+      const v = data.verborgen.get(a.id);
+      return `<section class="blok"><div class="mijn-rit beheer-blok">
+        <p><strong>Deze baan is verborgen</strong>${v.reden ? ` (${esc(v.reden)})` : ""}. Bezoekers zien hem niet.</p>
+        <button class="knop knop-licht" type="button" data-terugzetten>Terugzetten</button></div></section>`;
+    }
+    const voorstel = !a.deelVan && data.voorstellen[a.id];
+    return `<section class="blok"><h2>Beheer</h2><div class="mijn-rit beheer-blok">
+      ${voorstel ? `<p>OpenStreetMap ziet hier ${voorstel.length} sporen met een eigen naam: ${voorstel.map(esc).join(", ")}.</p>` : ""}
+      <div class="knoppen-rij">
+        ${a.deelVan ? "" : `<button class="knop knop-licht" type="button" data-splits='${voorstel ? esc(JSON.stringify(voorstel)) : ""}'>Splitsen in losse sporen</button>`}
+        <button class="knop knop-licht knop-gevaar" type="button" data-verberg>Verbergen</button>
+      </div>
+      <p class="klein">${a.deelVan
+        ? "Dit spoor hoort bij een gesplitste baan. De sporen aanpassen kan in <code>data/splitsen.json</code>. "
+        : "Splitsen is voor banen met twee of meer sporen, zoals een duelachtbaan. "}Verbergen is voor iets wat geen achtbaan is of dubbel staat; terugzetten kan op de beheerpagina.</p>
+    </div></section>`;
+  }
+
+  // "Winja's Fear & Winja's Force" -> beide namen; "Max & Moritz" -> "Max & Moritz (Max)", ...
+  function raadSporen(naam) {
+    const delen = naam.split(/\s*(?:&|\/|\+)\s*/).map((s) => s.trim()).filter(Boolean);
+    if (delen.length >= 2) return delen.every((d) => d.split(/\s+/).length >= 2) ? delen : delen.map((d) => `${naam} (${d})`);
+    return [`${naam} (1)`, `${naam} (2)`];
+  }
+
+  function openSplitsVenster(a, data, voorstel) {
+    const namen = voorstel && voorstel.length >= 2 ? voorstel : raadSporen(a.naam);
+    const veldHtml = (naam, i) => `<label>Spoor ${i + 1} <input type="text" class="spoor-naam" maxlength="100" value="${esc(naam)}"></label>`;
+    const d = maakVenster(`${a.naam} splitsen`, `
+      <form method="dialog" class="formulier" id="splits-form">
+        <p class="klein">Elk spoor wordt een eigen achtbaan die je los kunt afvinken.${a.ritten && a.ritten.length
+          ? " Je rit op deze baan telt daarna voor elk spoor; heb je er één niet gereden, verwijder dan de rit op de pagina van dat spoor." : ""}</p>
+        <div id="splits-namen">${namen.map(veldHtml).join("")}</div>
+        <button class="knop-klein" type="button" id="splits-meer">Nog een spoor</button>
+        <p class="fout" id="splits-fout" role="alert"></p>
+        <div class="knoppen">
+          <button class="knop" type="submit" id="splits-opslaan">Splitsen</button>
+          <button class="knop knop-licht" type="button" id="splits-sluit">Annuleren</button>
+        </div>
+        <p class="klein">Komt in <code>data/splitsen.json</code> op GitHub.</p>
+      </form>`);
+    const veld = (id) => $(`#${id}`, d);
+    veld("splits-sluit").addEventListener("click", () => d.close());
+    veld("splits-meer").addEventListener("click", () => {
+      const n = d.querySelectorAll(".spoor-naam").length;
+      if (n < 8) veld("splits-namen").insertAdjacentHTML("beforeend", veldHtml(`${a.naam} (${n + 1})`, n));
+    });
+    veld("splits-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const sporen = [...d.querySelectorAll(".spoor-naam")].map((i) => i.value.trim().replace(/\s+/g, " ")).filter(Boolean);
+      if (sporen.length < 2) { veld("splits-fout").textContent = "Vul minstens twee namen in."; return; }
+      if (new Set(sporen.map((s) => s.toLowerCase())).size !== sporen.length) { veld("splits-fout").textContent = "Geef elk spoor een eigen naam."; return; }
+      const gelukt = await metKnop(veld("splits-opslaan"), veld("splits-fout"), "Opslaan…", () =>
+        wijzigJson("data/splitsen.json", "splitsen", (lijst) => [...lijst.filter((s) => s && s.id !== a.id), { id: a.id, sporen }],
+          `Gesplitst in ${sporen.length} sporen: ${a.naam}`));
+      if (!gelukt) return;
+      d.close();
+      location.href = `achtbaan.html?id=${encodeURIComponent(a.id + "-1")}`;
+    });
+  }
+
+  function openVerbergVenster(a, data) {
+    if (a.ritten && a.ritten.length) {
+      const d = maakVenster(`${a.naam} verbergen`, `<p>Deze baan staat op je lijst. Verwijder eerst je ${a.ritten.length === 1 ? "rit" : "ritten"}, dan kun je hem verbergen.</p>
+        <div class="knoppen"><button class="knop" type="button" id="verberg-sluit">Sluiten</button></div>`);
+      $("#verberg-sluit", d).addEventListener("click", () => d.close());
+      return;
+    }
+    const d = maakVenster(`${a.naam} verbergen`, `
+      <form method="dialog" class="formulier" id="verberg-form">
+        <label>Waarom? <select id="verberg-reden">
+          <option>Geen achtbaan</option><option>Staat dubbel</option><option>Bestaat niet</option><option>Anders</option>
+        </select></label>
+        <label>Toelichting (mag leeg) <input type="text" id="verberg-notitie" maxlength="200" placeholder="Bijvoorbeeld: dubbel met Eurosat - CanCan Coaster"></label>
+        <p class="fout" id="verberg-fout" role="alert"></p>
+        <div class="knoppen">
+          <button class="knop knop-gevaar" type="submit" id="verberg-opslaan">Verbergen</button>
+          <button class="knop knop-licht" type="button" id="verberg-sluit">Annuleren</button>
+        </div>
+        <p class="klein">Komt in <code>data/verborgen.json</code>. Bezoekers zien hem daarna niet meer; terugzetten kan op de beheerpagina.</p>
+      </form>`);
+    const veld = (id) => $(`#${id}`, d);
+    veld("verberg-sluit").addEventListener("click", () => d.close());
+    veld("verberg-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const regel = { id: a.id, naam: a.naam, park: a.park || undefined, reden: veld("verberg-reden").value,
+        notitie: veld("verberg-notitie").value.trim() || undefined };
+      const gelukt = await metKnop(veld("verberg-opslaan"), veld("verberg-fout"), "Opslaan…", () =>
+        wijzigJson("data/verborgen.json", "verborgen", (lijst) => [...lijst.filter((v) => v && v.id !== a.id), regel],
+          `Verborgen: ${a.naam} (${regel.reden.toLowerCase()})`));
+      if (!gelukt) return;
+      d.close();
+      toast(`${a.naam} is verborgen.`, true);
+      location.href = a.parkId || a.park ? `./?park=${encodeURIComponent(a.parkId || a.park)}#overzicht` : "./#overzicht";
+    });
+  }
+
+  function zetTerug(id, naam) {
+    return wijzigJson("data/verborgen.json", "verborgen", (lijst) => lijst.filter((v) => v && v.id !== id), `Teruggezet: ${naam}`);
+  }
+
   function tekenMiniKaart(a) {
     const vak = $("#minikaart");
     if (!vak) return;
@@ -1276,7 +1447,8 @@
     const id = params.get("id") || "";
     let data;
     try { data = await laadAlles(); } catch (e) { toonFout(vak, e); return; }
-    const a = data.perId.get(id);
+    let a = data.perId.get(id);
+    if (!a && beheer && data.verborgenBanen.has(id)) a = data.verborgenBanen.get(id);
     if (!a) {
       vak.innerHTML = `<div class="melding"><h1>Deze achtbaan staat niet in de lijst</h1>
         <p>Er is geen achtbaan met de code <code>${esc(id) || "(leeg)"}</code>.</p>
@@ -1316,6 +1488,7 @@
       <header class="titel">
         <div>
           <h1>${esc(a.naam)}</h1>
+          ${a.deelVan ? sporenHtml(a, data) : ""}
           ${plek ? `<p class="plek">${plek}</p>` : ""}
           <p class="status status-${esc(a.status || "open")}">${esc(statusTekst(a))}</p>
         </div>
@@ -1328,7 +1501,8 @@
         <section class="plaats"><h2>Waar staat hij?</h2><div class="minikaart" id="minikaart" role="region" aria-label="Kaart"></div></section>
       </div>
       ${zelfdeParkHtml(a, data.lijst)}
-      ${bronnenHtml(a)}`;
+      ${bronnenHtml(a)}
+      ${beheer ? beheerBlokHtml(a, data) : ""}`;
 
     const foto = $("#hoofdfoto");
     if (foto) foto.addEventListener("error", () => fotoMislukt(foto, () => {
@@ -1349,10 +1523,18 @@
         openRitVenster(a, data, a.ritten[Number(k.dataset.ritBewerk)], opnieuw)));
       vak.querySelectorAll("[data-rit-weg]").forEach((k) => k.addEventListener("click", () =>
         verwijderRit(a, data, a.ritten[Number(k.dataset.ritWeg)], k, opnieuw)));
+      $("[data-splits]", vak)?.addEventListener("click", (e) => openSplitsVenster(a, data, e.currentTarget.dataset.splits ? JSON.parse(e.currentTarget.dataset.splits) : null));
+      $("[data-verberg]", vak)?.addEventListener("click", () => openVerbergVenster(a, data));
+      $("[data-terugzetten]", vak)?.addEventListener("click", (e) => metKnop(e.currentTarget, null, "Bezig…", async () => {
+        await zetTerug(a.id, a.naam);
+        location.reload();
+      }));
+      // Vanaf de beheerpagina: ?splits=1 opent meteen het venster met het voorstel
+      if (params.get("splits") === "1" && !a.deelVan && !data.verborgen.has(a.id)) openSplitsVenster(a, data, data.voorstellen[a.id] || null);
     }
 
-    if (/^Q\d+$/.test(a.id)) {
-      onthoud(`wiki:${a.id}`, () => haalWikipedia(a.id)).then((w) => {
+    if (wikidataVan(a)) {
+      onthoud(`wiki:${wikidataVan(a)}`, () => haalWikipedia(wikidataVan(a))).then((w) => {
         if (!w || !w.tekst) return;
         const alineas = w.tekst.split(/\n+/).map((p) => p.trim()).filter(Boolean).slice(0, 3);
         $("#wiki").innerHTML = alineas.map((p) => `<p>${esc(p)}</p>`).join("") +
@@ -1417,7 +1599,8 @@
              <button class="knop knop-licht" type="button" id="token-test">Token controleren</button>
              <button class="knop knop-licht knop-gevaar" type="button" id="token-weg">Token verwijderen</button>
            </div>
-           <div id="beheer-onbekend"></div>`
+           <div id="beheer-onbekend"></div>
+           <div id="beheer-lijsten"></div>`
         : `<p><strong>Beheer staat uit op dit apparaat.</strong> Plak je token hieronder. Hoe je dat maakt, staat verderop.</p>
            <form class="formulier" id="token-form">
              <label>Je fine-grained token <input type="password" id="token-veld" autocomplete="off" spellcheck="false" placeholder="github_pat_…" required></label>
@@ -1467,12 +1650,35 @@
     }
 
     async function toonOnbekend() {
-      try {
-        const data = await laadAlles();
-        if (!data.onbekend.length) return;
+      let data;
+      try { data = await laadAlles(); } catch (e) { return; /* lijst niet beschikbaar */ }
+      if (data.onbekend.length) {
         $("#beheer-onbekend").innerHTML = `<p class="fout">${data.onbekend.length} ${meervoud(data.onbekend.length, "rit verwijst", "ritten verwijzen")} naar een achtbaan die niet meer in de lijst staat:
           ${data.onbekend.map((r) => `<code>${esc(r.id)}</code>`).join(", ")}. Ze tellen niet mee. Kijk of de code in <code>data/gereden.json</code> klopt.</p>`;
-      } catch (e) { /* lijst niet beschikbaar */ }
+      }
+      // Wat je hebt verborgen of gesplitst, en wat OpenStreetMap voorstelt om te splitsen
+      const banenNaam = (id) => data.perId.get(id)?.heleNaam || data.perId.get(id)?.naam || id;
+      const verborgen = [...data.verborgen.values()];
+      const gesplitst = [...data.sporenVan.entries()];
+      const voorstellen = Object.entries(data.voorstellen).filter(([id]) => !data.sporenVan.has(id) && data.perId.has(id));
+      $("#beheer-lijsten").innerHTML = `
+        <h3 class="beheer-kop">Verborgen (${verborgen.length})</h3>
+        ${verborgen.length ? `<ul class="ritten ritten-beheer">${verborgen.map((v) => `<li>
+          <span><a href="${pagina(v)}">${esc(v.naam || v.id)}</a>${v.park ? `, ${esc(v.park)}` : ""} <span class="klein">(${esc(v.reden || "verborgen")}${v.notitie ? `: ${esc(v.notitie)}` : ""})</span></span>
+          <span class="knoppen-klein"><button class="knop-klein" type="button" data-terug="${esc(v.id)}">Terugzetten</button></span></li>`).join("")}</ul>`
+          : `<p class="klein">Nog niets. Op de pagina van een baan kun je hem verbergen als het geen achtbaan is of als hij dubbel staat.</p>`}
+        <h3 class="beheer-kop">In sporen gesplitst (${gesplitst.length})</h3>
+        ${gesplitst.length ? `<ul class="ritten">${gesplitst.map(([, sporen]) => `<li><a href="${pagina(sporen[0])}">${esc(sporen[0].heleNaam)}</a>: ${sporen.map((s) => esc(s.naam)).join(", ")}</li>`).join("")}</ul>` : ""}
+        ${voorstellen.length ? `<h3 class="beheer-kop">Misschien ook meer sporen (${voorstellen.length})</h3>
+          <p class="klein">OpenStreetMap ziet bij deze banen sporen met een eigen naam.</p>
+          <ul class="ritten ritten-beheer">${voorstellen.map(([id, sporen]) => `<li><span><a href="${pagina({ id })}">${esc(banenNaam(id))}</a>: ${sporen.map(esc).join(", ")}</span>
+            <span class="knoppen-klein"><a class="knop-klein" href="achtbaan.html?id=${encodeURIComponent(id)}&splits=1">Splitsen…</a></span></li>`).join("")}</ul>` : ""}`;
+      $("#beheer-lijsten").querySelectorAll("[data-terug]").forEach((k) => k.addEventListener("click", () =>
+        metKnop(k, null, "Bezig…", async () => {
+          const v = data.verborgen.get(k.dataset.terug);
+          await zetTerug(v.id, v.naam || v.id);
+          location.reload();
+        })));
     }
 
     teken();

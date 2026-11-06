@@ -1,0 +1,8 @@
+{
+  "uitleg": "Banen die niet op de site komen, omdat ze geen achtbaan zijn of dubbel staan. Verbergen kan met de knop Verbergen op de pagina van de baan (beheer); terugzetten op beheer.html.",
+  "verborgen": [
+    { "id": "osm-way-299335646", "naam": "Wichtelhausen", "park": "Europa-Park", "reden": "Geen achtbaan", "notitie": "speelplaats" },
+    { "id": "osm-node-14249754095", "naam": "Madame Freudenreich Curiosités", "park": "Europa-Park", "reden": "Geen achtbaan", "notitie": "darkride" },
+    { "id": "osm-node-14131249864", "naam": "Voltron Nevera Block", "park": "Europa-Park", "reden": "Geen achtbaan", "notitie": "onderdeel van Voltron Nevera" }
+  ]
+}

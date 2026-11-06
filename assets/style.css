@@ -477,3 +477,12 @@ h2 { font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 800; }
 .knop-bestand:focus-within { outline: 3px solid var(--rail); outline-offset: 3px; }
 .foto-kiezen .klein { margin-top: .4rem; }
 .knop-klein[hidden] { display: none; }
+
+/* ---------- sporen en verbergen (beheer) ---------- */
+
+.spoor-info { margin: .5rem 0 0; color: var(--inkt-zacht); }
+.beheer-blok .knoppen-rij { margin-bottom: .75rem; }
+.beheer-kop { font-family: var(--kop); font-weight: 800; font-size: 1.4rem; margin: 1.5rem 0 .5rem; }
+#splits-namen label { margin-bottom: .5rem; }
+#splits-meer { margin-bottom: .9rem; }
+a.knop-klein { text-decoration: none; display: inline-block; }
