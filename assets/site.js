@@ -883,9 +883,11 @@
     const links = [];
     if (/^Q\d+$/.test(a.id)) links.push(`<a href="https://www.wikidata.org/wiki/${a.id}">Wikidata</a>`);
     if (a.rcdb) links.push(`<a href="https://rcdb.com/${encodeURIComponent(a.rcdb)}.htm">RCDB</a>`);
-    const osm = a.osm || (/^osm-(node|way|relation)-\d+$/.test(a.id) ? a.id.slice(4).replace("-", "/") : "");
+    const osm = /^(node|way|relation)\/\d+$/.test(a.osm || "") ? a.osm
+      : /^osm-(node|way|relation)-\d+$/.test(a.id) ? a.id.slice(4).replace("-", "/") : "";
+    const lat = Number(a.lat), lon = Number(a.lon);
     if (osm) links.push(`<a href="https://www.openstreetmap.org/${osm}">OpenStreetMap</a>`);
-    else if (a.lat != null) links.push(`<a href="https://www.openstreetmap.org/?mlat=${a.lat}&mlon=${a.lon}#map=16/${a.lat}/${a.lon}">OpenStreetMap</a>`);
+    else if (a.lat != null && isFinite(lat) && isFinite(lon)) links.push(`<a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}">OpenStreetMap</a>`);
     return `<section class="blok"><h2>Meer weten</h2><ul class="links">${links.map((l) => `<li>${l}</li>`).join("")}</ul></section>`;
   }
 
