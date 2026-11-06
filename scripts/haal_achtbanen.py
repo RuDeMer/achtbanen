@@ -85,6 +85,7 @@ PRETPARK = "wd:Q194195"  # amusement park
 TALEN = ["nl", "mul", "en", "de", "fr", "es", "it", "pt", "sv", "pl", "ja", "zh"]
 
 KOPPEL_AFSTAND = 300      # meter: zelfde naam en zo dichtbij = dezelfde achtbaan
+KOPPEL_AFSTAND_NAAM = 1500  # meter: precies dezelfde naam (Wikidata zet een baan vaak midden in het park)
 KOPPEL_AFSTAND_PARK = 3000  # meter: zelfde naam en zelfde park, coördinaten wat onnauwkeurig
 LAND_AFSTAND = 25000      # meter: land overnemen van de dichtstbijzijnde bekende achtbaan
 PARKPUNT_AFSTAND = 600    # meter: park dat alleen als punt in OSM staat
@@ -537,6 +538,13 @@ def naam_sleutels(naam):
     return {k for k in (vol, los) if len(k) >= 2}
 
 
+def volle_sleutel(naam):
+    """Alleen de volledige vorm (zonder het weglaten van woorden als "coaster")."""
+    s = unicodedata.normalize("NFKD", str(naam)).casefold()
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return "".join(re.findall(r"\w+", re.sub(r"\([^)]*\)", " ", s).replace("&", " ")))
+
+
 def afstand(lat1, lon1, lat2, lon2):
     """Afstand in meter."""
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -650,12 +658,15 @@ class Parken:
             self.aantal += 1
 
     def zoek(self, lat, lon):
-        """Het kleinste parkgebied waar het punt in ligt, anders een parkpunt vlakbij."""
+        """Het parkgebied waar het punt in ligt, anders een parkpunt vlakbij. Liggen er
+        gebieden in elkaar (bijvoorbeeld een themagebied dat ook als park is getekend),
+        dan gaat een gebied met een Wikidata-koppeling voor, en daarna het kleinste."""
         beste = None
         for p in self.vlakken.hier(lat, lon):
             x0, y0, x1, y1 = p["bbox"]
             if x0 <= lon <= x1 and y0 <= lat <= y1 and binnen(lon, lat, p["lijnen"]):
-                if beste is None or p["oppervlak"] < beste["oppervlak"]:
+                sleutel = (p["qid"] is None, p["oppervlak"])
+                if beste is None or sleutel < (beste["qid"] is None, beste["oppervlak"]):
                     beste = p
         if beste:
             return beste
@@ -784,6 +795,7 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel):
         if o["id"] in naar_doel or not o["naam"]:
             continue
         kandidaten = {id(a): a for n in o["varianten"] for k in naam_sleutels(n) for a in index.get(k, [])}
+        o_vol = {volle_sleutel(n) for n in o["varianten"]}
         beste = None
         for a in kandidaten.values():
             zp = zelfde_park(o, a)
@@ -792,6 +804,8 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel):
                 if d <= KOPPEL_AFSTAND:
                     score = d
                 elif zp and d <= KOPPEL_AFSTAND_PARK:
+                    score = KOPPEL_AFSTAND + d
+                elif d <= KOPPEL_AFSTAND_NAAM and o_vol & {volle_sleutel(n) for n in a["_namen"]}:
                     score = KOPPEL_AFSTAND + d
                 else:
                     continue
@@ -975,7 +989,7 @@ def mediawiki(url, params, pogingen=4):
 
 
 def nette_bestandsnaam(naam):
-    naam = re.split(r"[?#]", naam, 1)[0].replace("_", " ").strip()
+    naam = re.split(r"[?#]", naam, maxsplit=1)[0].replace("_", " ").strip()
     return naam[:1].upper() + naam[1:] if naam else None
 
 
