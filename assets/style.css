@@ -374,3 +374,78 @@ h2 { font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 800; }
 .stappen { margin: 0 0 1rem; padding-left: 1.4rem; max-width: 68ch; }
 .stappen li { margin-bottom: .6rem; }
 .stappen li::marker { font-family: var(--kop); font-weight: 800; color: var(--rail); }
+
+/* ---------- datumkeuze in het venster ---------- */
+
+.keuze { border: 0; padding: 0; margin: 0 0 .8rem; display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; }
+.keuze legend { font-size: .9rem; color: var(--inkt-zacht); padding: 0; margin-bottom: .35rem; }
+.dialoog .keuze .vinkje, .formulier .keuze .vinkje {
+  display: flex; align-items: center; gap: .45rem; margin: 0; font-size: 1rem; color: var(--inkt);
+}
+.keuze .vinkje input { width: 1.15rem; height: 1.15rem; padding: 0; accent-color: var(--rail); }
+[data-wanneer][hidden] { display: none; }
+
+/* ---------- afvinkmodus ---------- */
+
+.beheer-balk { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin: 0 0 1rem; }
+.beheer-balk p { margin: 0; max-width: 70ch; }
+.beheer-balk .klein { font-size: .9rem; color: var(--inkt-zacht); }
+
+.kaart.is-afvink { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.kaart.is-afvink:hover .kaart-naam { text-decoration: none; }
+.kaart.is-afvink.is-gereden { cursor: default; opacity: .62; }
+.kaart.is-gekozen { border-color: var(--rail); box-shadow: 0 0 0 2px var(--rail); }
+.kaart.is-gekozen .kaart-foto img { opacity: .85; }
+.afvink-vak {
+  position: absolute; top: .55rem; right: .55rem; z-index: 3; margin: 0;
+  width: 1.9rem; height: 1.9rem; accent-color: var(--rail); cursor: pointer;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / .45));
+}
+.afvink-vak:disabled { cursor: default; }
+/* Afvinken: kleinere kaartjes, zodat je er meer tegelijk ziet */
+.raster.is-afvink { grid-template-columns: repeat(auto-fill, minmax(min(100%, 11.5rem), 1fr)); gap: .75rem; }
+.raster.is-afvink .kaart-foto { aspect-ratio: 16 / 9; }
+.raster.is-afvink .kaart-tekst { padding: .55rem .7rem .7rem; }
+.raster.is-afvink .kaart-naam { font-size: 1.2rem; }
+.raster.is-afvink .kaart-plek, .raster.is-afvink .kaart-meta, .raster.is-afvink .kaart-rit { font-size: .8rem; }
+@media (max-width: 40rem) {
+  .raster.is-afvink { grid-template-columns: 1fr 1fr; gap: .5rem; }
+  .raster.is-afvink .kaart-naam { font-size: 1.05rem; }
+  .raster.is-afvink .afvink-vak { width: 1.6rem; height: 1.6rem; top: .4rem; right: .4rem; }
+}
+
+.afvink-balk {
+  position: sticky; bottom: 0; z-index: 5; margin: 1.5rem 0 0;
+  display: flex; flex-wrap: wrap; align-items: center; gap: .55rem 1rem;
+  padding: .75rem 1rem calc(.75rem + env(safe-area-inset-bottom));
+  background: var(--inkt); color: var(--lucht); border-radius: var(--rand) var(--rand) 0 0;
+  box-shadow: 0 -6px 20px rgb(11 20 48 / .18);
+}
+.afvink-balk[hidden] { display: none; }
+.afvink-aantal { margin: 0; font-size: 1rem; order: 1; flex: 1 1 auto; }
+.afvink-aantal strong { font-family: var(--kop); font-size: 1.6rem; font-weight: 800; }
+.afvink-knoppen { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; order: 2; }
+.afvink-balk .knop { order: 3; background: var(--rail); color: #fff; padding: .6rem 1.3rem; }
+.afvink-balk .knop:hover { filter: brightness(1.08); }
+.afvink-balk .knop-klein { color: var(--lucht); border-color: color-mix(in srgb, var(--lucht) 45%, transparent); padding: .45rem .7rem; }
+.afvink-balk .knop-klein:hover { border-color: var(--lucht); }
+.afvink-balk .knop-klein:disabled { opacity: .45; cursor: default; }
+.afvink-jaar { display: flex; align-items: center; gap: .4rem; font-size: .9rem; }
+.afvink-jaar input {
+  width: 6.2rem; font: inherit; font-size: .95rem; color: var(--inkt); background: var(--lucht);
+  border: 1px solid transparent; border-radius: 6px; padding: .4rem .55rem;
+}
+.afvink-balk .fout { order: 4; flex-basis: 100%; margin: 0; color: var(--rail-zacht); }
+@media (prefers-color-scheme: dark) { .afvink-balk .fout { color: var(--rail); } }
+
+/* Telefoon: aantal en Opslaan bovenaan, de rest klein eronder */
+@media (max-width: 40rem) {
+  .afvink-balk { gap: .45rem .6rem; padding: .6rem .75rem calc(.6rem + env(safe-area-inset-bottom)); }
+  .afvink-aantal { font-size: .95rem; }
+  .afvink-aantal strong { font-size: 1.35rem; }
+  .afvink-balk .knop { order: 2; padding: .5rem 1.1rem; }
+  .afvink-knoppen { order: 3; flex-basis: 100%; gap: .35rem; }
+  .afvink-balk .knop-klein { font-size: .8rem; padding: .35rem .55rem; }
+  .afvink-jaar { font-size: .8rem; gap: .3rem; }
+  .afvink-jaar input { width: 4.8rem; font-size: .85rem; padding: .3rem .45rem; }
+}

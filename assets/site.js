@@ -52,6 +52,13 @@
     return d.toLocaleDateString(TAAL, { day: "numeric", month: maand, year: "numeric" });
   }
 
+  // "op 14 juli 2006", maar "in 2006" of "in juli 2006"
+  const opDatumTekst = (d) => `${/^\d{4}(-\d{2})?$/.test(String(d)) ? "in" : "op"} ${datum(d)}`;
+  function vandaag() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
   // Eigen foto (pad of link) of een bestandsnaam op Wikimedia Commons
   function isEigenFoto(foto) { return /^(https?:|\.{0,2}\/|fotos\/)/.test(foto || ""); }
   function fotoBron(foto, breedte) {
@@ -288,7 +295,7 @@
   function zetRitten(data, ritten) {
     data.ritten = ritten.filter((r) => r && r.id);
     data.onbekend = [];
-    for (const a of data.lijst) { delete a.ritten; delete a.rit; }
+    for (const a of data.lijst) { delete a.ritten; delete a.rit; delete a.creditDatum; delete a.laatsteDatum; }
     for (const rit of data.ritten) {
       const a = data.perId.get(rit.id);
       if (!a) { data.onbekend.push(rit); continue; }
@@ -299,6 +306,12 @@
       a.ritten.sort((x, y) => String(x.datum || "9999").localeCompare(String(y.datum || "9999")));
       // Eerste rit telt; cijfer, notitie en foto mogen in een latere regel staan
       a.rit = Object.assign({}, ...a.ritten.slice().reverse(), { datum: a.ritten[0].datum });
+      // Ritten zonder datum tellen gewoon mee. Maar heeft één rit op deze baan geen datum,
+      // dan weten we niet wanneer je eerste rit was: dan doet de baan niet mee voor
+      // "eerste credit" en "nieuwste credit".
+      const metDatum = a.ritten.filter((r) => r.datum);
+      a.creditDatum = metDatum.length === a.ritten.length ? a.ritten[0].datum : null;
+      a.laatsteDatum = metDatum.length ? metDatum[metDatum.length - 1].datum : null;
     }
     data.gereden = data.lijst.filter((a) => a.rit);
     if (data.onbekend.length) console.warn("Deze codes uit gereden.json staan niet in de lijst:", data.onbekend.map((r) => r.id));
@@ -398,7 +411,7 @@
     $("#teller-sub").textContent = n
       ? `in ${landen} ${meervoud(landen, "land", "landen")} en ${parken} ${meervoud(parken, "park", "parken")}`
       : beheer
-        ? "De teller staat nog op nul. Open een achtbaan en kies Zet op mijn lijst."
+        ? "De teller staat nog op nul. Kies Afvinken bij Alle achtbanen, of open een achtbaan en kies Zet op mijn lijst."
         : "De teller staat nog op nul.";
   }
 
@@ -406,8 +419,8 @@
     const vak = $("#feiten");
     if (!gereden.length) { vak.hidden = true; vak.innerHTML = ""; return; }
     const hoogste = (veld) => gereden.filter((a) => a[veld]).sort((a, b) => b[veld] - a[veld])[0];
-    const opDatum = gereden.filter((a) => a.rit.datum)
-      .sort((a, b) => String(a.rit.datum).localeCompare(String(b.rit.datum)));
+    const opDatum = gereden.filter((a) => a.creditDatum)
+      .sort((a, b) => String(a.creditDatum).localeCompare(String(b.creditDatum)));
     const favoriet = gereden.filter((a) => Number(a.rit.cijfer))
       .sort((a, b) => b.rit.cijfer - a.rit.cijfer)[0];
     const eerste = opDatum[0];
@@ -418,8 +431,8 @@
       ["Snelste", hoogste("snelheid"), (a) => `${getal(a.snelheid)} km/u`],
       ["Langste", hoogste("lengte"), (a) => `${getal(a.lengte)} m`],
       ["Favoriet", favoriet, (a) => `${getal(a.rit.cijfer, 1)}/10`],
-      ["Eerste credit", eerste, (a) => datum(a.rit.datum, true)],
-      ["Nieuwste credit", laatste, (a) => datum(a.rit.datum, true)],
+      ["Eerste credit", eerste, (a) => datum(a.creditDatum, true)],
+      ["Nieuwste credit", laatste, (a) => datum(a.creditDatum, true)],
     ].filter(([, a]) => a);
 
     vak.innerHTML = feiten.map(([label, a, waarde]) => `
@@ -467,38 +480,46 @@
   }
 
   const opNaam = (a, b) => a.naam.localeCompare(b.naam, TAAL);
+  const ritSleutel = (a) => (a.rit ? String(a.laatsteDatum || "0") : "");
   const SORTERINGEN = {
     naam: opNaam,
     nieuw: (a, b) => (b.geopend || 0) - (a.geopend || 0) || opNaam(a, b),
     oud: (a, b) => (a.geopend || 9999) - (b.geopend || 9999) || opNaam(a, b),
     hoog: (a, b) => (b.hoogte || 0) - (a.hoogte || 0) || opNaam(a, b),
     snel: (a, b) => (b.snelheid || 0) - (a.snelheid || 0) || opNaam(a, b),
-    rit: (a, b) => String(b.rit?.datum || "").localeCompare(String(a.rit?.datum || "")) || opNaam(a, b),
+    rit: (a, b) => ritSleutel(b).localeCompare(ritSleutel(a)) || opNaam(a, b),
   };
 
-  function kaartHtml(a) {
+  function kaartHtml(a, gekozen) {
     const foto = a.rit?.foto || a.foto;
     const src = fotoBron(foto, 500);
     const plek = [a.park, a.land].filter(Boolean).join(", ");
     const eigen = eigenPad(foto);
+    // Afvinkmodus: het hele kaartje is een vinkje, zodat je snel kunt tikken
+    const afvink = !!gekozen;
+    const tag = afvink ? "label" : "a";
+    const klassen = `kaart${a.rit ? " is-gereden" : ""}${afvink ? " is-afvink" : ""}${afvink && gekozen.has(a.id) ? " is-gekozen" : ""}`;
+    const vinkje = afvink
+      ? `<input type="checkbox" class="afvink-vak" value="${esc(a.id)}"${a.rit ? " checked disabled" : gekozen.has(a.id) ? " checked" : ""}>`
+      : "";
     return `
-      <a class="kaart${a.rit ? " is-gereden" : ""}" href="${pagina(a)}">
+      <${tag} class="${klassen}"${afvink ? "" : ` href="${pagina(a)}"`}>${vinkje}
         <span class="kaart-foto">${src ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async"${eigen ? ` data-eigen="${esc(eigen)}"` : ""}>` : ""}</span>
         <span class="kaart-tekst">
           <span class="kaart-naam">${esc(a.naam)}</span>
           ${plek ? `<span class="kaart-plek">${esc(plek)}</span>` : ""}
           <span class="kaart-meta">${esc(statusTekst(a))}</span>
-          ${a.rit ? `<span class="kaart-rit">✓ Gereden${a.rit.datum ? " " + esc(datum(a.rit.datum, true)) : ""}</span>` : ""}
+          ${a.rit ? `<span class="kaart-rit">✓ Gereden${a.creditDatum ? " " + esc(datum(a.creditDatum, true)) : ""}</span>` : ""}
         </span>
-      </a>`;
+      </${tag}>`;
   }
 
-  function startOverzicht(data) {
+  function startOverzicht(data, naWijziging) {
     const { lijst } = data;
     const el = {
       zoek: $("#zoek"), land: $("#land"), status: $("#status"), sorteer: $("#sorteer"),
       gereden: $("#alleen-gereden"), raster: $("#raster"), meer: $("#meer"),
-      tekst: $("#resultaten-tekst"), park: $("#park-filter"),
+      tekst: $("#resultaten-tekst"), park: $("#park-filter"), filters: $(".filters"),
     };
 
     const perLand = new Map();
@@ -572,14 +593,118 @@
         el.meer.hidden = true;
         return;
       }
+      const kaartje = (a) => kaartHtml(a, af.aan ? af.gekozen : null);
+      el.raster.classList.toggle("is-afvink", af.aan);
       if (alleenNieuwe) {
-        el.raster.insertAdjacentHTML("beforeend", resultaat.slice(st.toon - PER_KEER, st.toon).map(kaartHtml).join(""));
+        el.raster.insertAdjacentHTML("beforeend", resultaat.slice(st.toon - PER_KEER, st.toon).map(kaartje).join(""));
       } else {
-        el.raster.innerHTML = resultaat.slice(0, st.toon).map(kaartHtml).join("");
+        el.raster.innerHTML = resultaat.slice(0, st.toon).map(kaartje).join("");
       }
       const over = n - st.toon;
       el.meer.hidden = over <= 0;
       el.meer.textContent = `Toon meer (nog ${getal(over)})`;
+      tekenAfvink();
+    }
+
+    /* ---------- Afvinkmodus (alleen beheer) ----------
+       Een vinkje op elk kaartje. Je keuze blijft bewaard als je filtert of de pagina
+       herlaadt. Opslaan zet alles in één keer (één commit) in gereden.json. */
+    const AFVINK = "achtbanen-afvink";
+    const af = { aan: false, gekozen: new Set() };
+    if (beheer) {
+      try {
+        const b = JSON.parse(opslag.lees(AFVINK) || "null");
+        if (b) { af.aan = !!b.aan; af.gekozen = new Set((b.ids || []).filter((id) => data.perId.has(id))); }
+      } catch (e) { /* begin leeg */ }
+      el.filters.insertAdjacentHTML("afterend", '<div class="beheer-balk" id="beheer-balk"></div>');
+      $("#overzicht").insertAdjacentHTML("beforeend", '<div class="afvink-balk" id="afvink-balk" hidden></div>');
+    }
+    const bewaarAfvink = () => opslag.zet(AFVINK, JSON.stringify({ aan: af.aan, ids: [...af.gekozen] }));
+    const nogTeKiezen = () => resultaat.filter((a) => !a.rit && !af.gekozen.has(a.id));
+
+    function tekenAfvink() {
+      if (!beheer) return;
+      const balk = $("#beheer-balk"), onder = $("#afvink-balk");
+      if (!af.aan) {
+        balk.innerHTML = `<button class="knop knop-licht" type="button" id="afvink-aan">Afvinken</button>
+          <span class="klein">Snel een hele rij achtbanen op je lijst zetten.</span>`;
+        onder.hidden = true;
+        return;
+      }
+      balk.innerHTML = `<p><strong>Afvinkmodus.</strong> Tik op elke achtbaan die je gereden hebt. Tip: filter op een park of land en kies <em>Alles kiezen</em>.</p>`;
+      const n = af.gekozen.size, rest = nogTeKiezen().length;
+      if (!onder.dataset.klaar) {
+        onder.innerHTML = `<p class="afvink-aantal" aria-live="polite"></p>
+          <div class="afvink-knoppen">
+            <button class="knop-klein" type="button" id="afvink-alles"></button>
+            <button class="knop-klein" type="button" id="afvink-niets">Niets kiezen</button>
+            <label class="afvink-jaar">Jaar <input type="number" id="afvink-jaar" inputmode="numeric" min="1900" max="${new Date().getFullYear() + 1}" placeholder="mag leeg"></label>
+            <button class="knop-klein" type="button" id="afvink-stop">Stoppen</button>
+          </div>
+          <button class="knop" type="button" id="afvink-opslaan">Opslaan</button>
+          <p class="fout" id="afvink-fout" role="alert"></p>`;
+        onder.dataset.klaar = "1";
+      }
+      $(".afvink-aantal", onder).innerHTML = `<strong>${getal(n)}</strong> ${meervoud(n, "achtbaan", "achtbanen")} gekozen`;
+      $("#afvink-alles").textContent = `Alles kiezen (${getal(rest)})`;
+      $("#afvink-alles").disabled = !rest;
+      $("#afvink-niets").disabled = !n;
+      $("#afvink-opslaan").disabled = !n;
+      onder.hidden = false;
+    }
+
+    async function slaAfvinkOp(knop) {
+      const fout = $("#afvink-fout");
+      const jaar = $("#afvink-jaar").value.trim();
+      if (jaar && (!/^\d{4}$/.test(jaar) || jaar < 1900 || jaar > new Date().getFullYear() + 1)) {
+        fout.textContent = "Vul een jaar in zoals 2006, of laat het vak leeg.";
+        return;
+      }
+      const banen = [...af.gekozen].map((id) => data.perId.get(id)).filter((a) => a && !a.rit).sort(opNaam);
+      if (!banen.length) { af.gekozen.clear(); bewaarAfvink(); tekenAfvink(); return; }
+      const bericht = banen.length === 1
+        ? `Credit afgevinkt: ${banen[0].naam}`
+        : `${banen.length} credits afgevinkt\n\n${banen.map((a) => `- ${a.naam}${a.park ? ` (${a.park})` : ""}`).join("\n")}`;
+      const gelukt = await metKnop(knop, fout, "Opslaan…", () => bewaarRitten(data, (ritten) => {
+        // Staat een baan intussen al op je lijst (bijvoorbeeld via je telefoon), dan niet nog een keer
+        const al = new Set(ritten.map((r) => r && data.perId.get(r.id)).filter(Boolean));
+        return [...ritten, ...banen.filter((a) => !al.has(a)).map((a) => (jaar ? { id: a.id, datum: jaar } : { id: a.id }))];
+      }, bericht));
+      if (!gelukt) return;
+      af.gekozen.clear();
+      bewaarAfvink();
+      naWijziging();
+      bereken();
+      toon(false);
+      toast(`${getal(banen.length)} ${meervoud(banen.length, "credit", "credits")} opgeslagen. Bezoekers zien het over een paar minuten.`, true);
+    }
+
+    if (beheer) {
+      $("#overzicht").addEventListener("click", (e) => {
+        const knop = e.target.closest("button");
+        if (!knop) return;
+        if (knop.id === "afvink-aan") { af.aan = true; bewaarAfvink(); toon(false); }
+        if (knop.id === "afvink-stop") {
+          if (af.gekozen.size && !confirm(`Stoppen zonder opslaan? Je keuze van ${af.gekozen.size} ${meervoud(af.gekozen.size, "achtbaan", "achtbanen")} gaat verloren.`)) return;
+          af.aan = false; af.gekozen.clear(); bewaarAfvink(); toon(false);
+        }
+        if (knop.id === "afvink-alles") {
+          const nieuw = nogTeKiezen();
+          if (nieuw.length > 150 && !confirm(`Wil je echt ${getal(nieuw.length)} achtbanen in één keer kiezen?`)) return;
+          nieuw.forEach((a) => af.gekozen.add(a.id));
+          bewaarAfvink(); toon(false);
+        }
+        if (knop.id === "afvink-niets") { af.gekozen.clear(); bewaarAfvink(); toon(false); }
+        if (knop.id === "afvink-opslaan") slaAfvinkOp(knop);
+      });
+      el.raster.addEventListener("change", (e) => {
+        const vak = e.target.closest(".afvink-vak");
+        if (!vak) return;
+        if (vak.checked) af.gekozen.add(vak.value); else af.gekozen.delete(vak.value);
+        vak.closest(".kaart").classList.toggle("is-gekozen", vak.checked);
+        bewaarAfvink();
+        tekenAfvink();
+      });
     }
 
     function ververs() { st.toon = PER_KEER; bereken(); toon(false); bewaarInAdres(); }
@@ -634,10 +759,9 @@
       toonFout($("#raster"), e);
       return;
     }
-    vulHero(data.gereden);
-    vulFeiten(data.gereden);
-    tekenKaart(data.gereden);
-    startOverzicht(data);
+    const vulBoven = () => { vulHero(data.gereden); vulFeiten(data.gereden); tekenKaart(data.gereden); };
+    vulBoven();
+    startOverzicht(data, vulBoven);
     if (data.bijgewerkt) $("#bijgewerkt").textContent = `, bijgewerkt op ${datum(data.bijgewerkt)}`;
   }
 
@@ -693,7 +817,7 @@
 
   function ritOmschrijving(x) {
     return [
-      datum(x.datum) || "datum onbekend",
+      datum(x.datum) || "zonder datum",
       x.cijfer ? `${getal(x.cijfer, 1)}/10` : "",
       x.notitie || "",
     ].filter(Boolean).join(", ");
@@ -719,7 +843,7 @@
           </span></li>`).join("")}</ul>`;
     } else if (a.ritten.length > 1) {
       lijst = `<p>${a.ritten.length} keer gereden:</p><ul class="ritten">${a.ritten.map((x) =>
-        `<li>${esc(datum(x.datum) || "datum onbekend")}${x.notitie ? `, ${esc(x.notitie)}` : ""}</li>`).join("")}</ul>`;
+        `<li>${esc(datum(x.datum) || "zonder datum")}${x.notitie ? `, ${esc(x.notitie)}` : ""}</li>`).join("")}</ul>`;
     }
     return `<section class="blok"><h2>Mijn rit</h2><div class="mijn-rit">
         ${r.notitie && a.ritten.length === 1 ? `<p class="notitie">${esc(r.notitie)}</p>` : ""}
@@ -788,9 +912,21 @@
 
   function openRitVenster(a, data, oud, klaar) {
     const v = oud || {};
+    // Datum is niet verplicht: geen datum, alleen een jaar of een volledige datum
+    const was = String(v.datum || "");
+    const wanneer = !was ? "geen" : /^\d{4}$/.test(was) ? "jaar" : /^\d{4}-\d{2}-\d{2}/.test(was) ? "datum" : "anders";
+    const keuze = (waarde, tekst) => `<label class="vinkje"><input type="radio" name="rit-wanneer" value="${waarde}"${wanneer === waarde ? " checked" : ""}> ${tekst}</label>`;
     const d = maakVenster(oud ? `Rit op ${a.naam} bewerken` : `${a.naam} op je lijst zetten`, `
       <form method="dialog" class="formulier" id="rit-form">
-        <label>Datum van je rit <input type="date" id="rit-datum" value="${esc(oud ? v.datum || "" : new Date().toISOString().slice(0, 10))}"></label>
+        <fieldset class="keuze">
+          <legend>Wanneer was je rit?</legend>
+          ${keuze("geen", "Geen datum")}
+          ${keuze("jaar", "Alleen een jaar")}
+          ${keuze("datum", "Volledige datum")}
+          ${wanneer === "anders" ? keuze("anders", `Laten zoals het is (${esc(datum(was))})`) : ""}
+        </fieldset>
+        <label data-wanneer="jaar">Jaar <input type="number" id="rit-jaar" inputmode="numeric" min="1900" max="${new Date().getFullYear() + 1}" placeholder="bijvoorbeeld 2006" value="${esc(wanneer === "jaar" ? was : "")}"></label>
+        <label data-wanneer="datum">Datum <input type="date" id="rit-datum" max="${vandaag()}" value="${esc(wanneer === "datum" ? was.slice(0, 10) : vandaag())}"></label>
         <label>Cijfer van 1 tot 10 (mag leeg) <input type="text" id="rit-cijfer" inputmode="decimal" placeholder="bijvoorbeeld 8,5" value="${esc(v.cijfer != null ? String(v.cijfer).replace(".", ",") : "")}"></label>
         <label>Notitie (mag leeg) <input type="text" id="rit-notitie" maxlength="200" placeholder="Bijvoorbeeld: voorste rij, regen" value="${esc(v.notitie || "")}"></label>
         <label>Eigen foto in de map fotos (mag leeg) <input type="text" id="rit-foto" placeholder="bijvoorbeeld baron.jpg" value="${esc((v.foto || "").replace(/^fotos\//, ""))}"></label>
@@ -804,12 +940,36 @@
 
     const veld = (id) => $(`#${id}`, d);
     veld("rit-sluit").addEventListener("click", () => d.close());
+    const gekozen = () => $("input[name=rit-wanneer]:checked", d).value;
+    function toonWanneer() {
+      d.querySelectorAll("[data-wanneer]").forEach((el) => { el.hidden = el.dataset.wanneer !== gekozen(); });
+    }
+    d.querySelectorAll("input[name=rit-wanneer]").forEach((r) => r.addEventListener("change", () => {
+      toonWanneer();
+      const vak = d.querySelector(`[data-wanneer="${gekozen()}"] input`);
+      if (vak) vak.focus();
+    }));
+    toonWanneer();
+
+    function leesDatum() {
+      const k = gekozen();
+      if (k === "geen") return "";
+      if (k === "anders") return was;
+      if (k === "jaar") {
+        const jaar = veld("rit-jaar").value.trim();
+        if (!/^\d{4}$/.test(jaar) || jaar < 1900 || jaar > new Date().getFullYear() + 1) throw new Error("Vul een jaar in, bijvoorbeeld 2006. Of kies Geen datum.");
+        return jaar;
+      }
+      const dag = veld("rit-datum").value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dag)) throw new Error("Kies een datum. Of kies Geen datum.");
+      return dag;
+    }
 
     function leesFormulier() {
       // Velden die je in gereden.json met de hand hebt toegevoegd, blijven bewaard
-      const rit = Object.assign({ id: a.id }, v);
+      const rit = { id: a.id, datum: undefined, cijfer: undefined, notitie: undefined, foto: undefined, ...v };
       const zet = (k, w) => { if (w === undefined || w === "") delete rit[k]; else rit[k] = w; };
-      zet("datum", veld("rit-datum").value);
+      zet("datum", leesDatum());
       const ruwCijfer = veld("rit-cijfer").value.trim();
       const cijfer = parseFloat(ruwCijfer.replace(",", "."));
       if (ruwCijfer && !(cijfer >= 1 && cijfer <= 10)) throw new Error("Een cijfer moet tussen 1 en 10 liggen.");
@@ -896,7 +1056,7 @@
     ].filter(Boolean).join(", ");
 
     const stempel = a.rit
-      ? `<div class="stempel">Gereden${a.rit.datum ? `<small>op ${esc(datum(a.rit.datum))}</small>` : ""}</div>`
+      ? `<div class="stempel">Gereden${a.creditDatum ? `<small>${esc(opDatumTekst(a.creditDatum))}</small>` : ""}</div>`
       : `<div class="stempel is-nog-niet">Nog niet gereden</div>`;
 
     vak.innerHTML = `
