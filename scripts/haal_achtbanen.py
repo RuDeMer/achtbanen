@@ -65,7 +65,11 @@ OVERPASS = [
     ("private.coffee", "https://overpass.private.coffee/api/interpreter"),
     ("kumi.systems", "https://overpass.kumi.systems/api/interpreter"),
 ]
-VRAAG_OSM = """[out:json][timeout:900][maxsize:2147483648];
+# Hoe lang Overpass in totaal mag duren (alle pogingen en servers samen), en per poging.
+# Lukt het niet binnen die tijd, dan blijven de OSM-gegevens van de vorige keer staan.
+OVERPASS_TOTAAL = int(os.environ.get("OVERPASS_TOTAAL", 25 * 60))
+OVERPASS_POGING = 600
+VRAAG_OSM = f"""[out:json][timeout:{OVERPASS_POGING}][maxsize:1073741824];
 node["attraction"="roller_coaster"];
 out body qt;
 (way["attraction"="roller_coaster"]; relation["attraction"="roller_coaster"];);
@@ -191,18 +195,24 @@ def vraag(sparql):
 
 def vraag_overpass():
     """Eén grote Overpass-vraag. Bij drukte (429, 504) even wachten en opnieuw,
-    bij een storing de volgende server."""
+    bij een storing de volgende server. Alles samen nooit langer dan OVERPASS_TOTAAL."""
     body = urllib.parse.urlencode({"data": VRAAG_OSM}).encode()
     fouten = []
+    begin = time.monotonic()
+    over = lambda: OVERPASS_TOTAAL - (time.monotonic() - begin)  # noqa: E731
     for naam, url in OVERPASS:
         for poging in range(3):
+            if over() < 120:
+                fouten.append(f"tijd op na {round((time.monotonic() - begin) / 60)} minuten")
+                raise RuntimeError("Overpass gaf niet op tijd antwoord:\n  " + "\n  ".join(fouten))
+            print(f"  Overpass ({naam}): vraag verstuurd, poging {poging + 1}…")
             try:
                 verzoek = urllib.request.Request(url, data=body, headers={
                     "Accept": "application/json",
                     "Content-Type": "application/x-www-form-urlencoded",
                     "User-Agent": USER_AGENT,
                 })
-                with urllib.request.urlopen(verzoek, timeout=1000) as antwoord:
+                with urllib.request.urlopen(verzoek, timeout=min(OVERPASS_POGING + 60, over())) as antwoord:
                     data = json.load(antwoord)
                 # Overpass meldt een time-out of geheugenfout soms in een 200-antwoord
                 opmerking = str(data.get("remark") or "")
@@ -215,17 +225,20 @@ def vraag_overpass():
                 return elementen
             except urllib.error.HTTPError as fout:
                 if fout.code in (429, 502, 503, 504) and poging < 2:
-                    wacht = int(fout.headers.get("Retry-After") or 0) or 60 * (poging + 1)
+                    wacht = min(int(fout.headers.get("Retry-After") or 0) or 60 * (poging + 1), 180)
                     print(f"  Overpass ({naam}): HTTP {fout.code}, het is druk; opnieuw over {wacht} s")
                     time.sleep(wacht)
                     continue
                 fouten.append(f"{naam}: HTTP {fout.code}")
                 break
             except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as fout:
-                if poging < 1:
+                # Te traag (time-out): meteen de volgende server. Korte storing: één keer opnieuw.
+                traag = isinstance(fout, TimeoutError) or "timed out" in str(fout).lower() or "timeout" in str(fout).lower()
+                if poging < 1 and not traag:
                     print(f"  Overpass ({naam}): {fout}; opnieuw over 30 s")
                     time.sleep(30)
                     continue
+                print(f"  Overpass ({naam}): {fout}; volgende server")
                 fouten.append(f"{naam}: {fout}")
                 break
     raise RuntimeError("Geen enkele Overpass-server gaf antwoord:\n  " + "\n  ".join(fouten))
@@ -1400,6 +1413,9 @@ def samenvatting(tel, grootte):
 
 
 def main():
+    # Elke regel meteen in het logboek, ook in GitHub Actions
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
     vorige = lees_json(UITVOER)
     vorig_aantal = (vorige or {}).get("aantal", 0)
     tel = defaultdict(int)
