@@ -12,7 +12,10 @@ Bronnen
 - OpenStreetMap, via de Overpass API: © OpenStreetMap-bijdragers, onder de
   Open Database License (ODbL). Omdat data/achtbanen.json gegevens uit
   OpenStreetMap bevat, valt dat bestand onder de ODbL.
-- Foto's: alleen bestandsnamen van Wikimedia Commons. De site toont per foto
+- Foto's: alleen bestandsnamen van Wikimedia Commons, na controle dat het
+  bestand er echt staat met een vrije licentie. Volgorde: Wikidata P18, de
+  Commons-categorie (P373), de vrije hoofdafbeelding van het Wikipedia-artikel,
+  de image- of wikimedia_commons-tag uit OpenStreetMap. De site toont per foto
   de maker en de licentie.
 Gegevens of foto's van rcdb.com worden niet gebruikt. Alleen het RCDB-nummer
 (uit Wikidata of OpenStreetMap) staat erin, voor een link naar de RCDB-pagina.
@@ -799,6 +802,7 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel):
         eerste = groep[0]
         a["osm"] = osm_pad(eerste["id"])
         a["_osm_ids"] = [o["id"] for o in groep]
+        a["_osm_fotos"] = osm_fotos(groep)
         if a.get("lat") is None:
             a["lat"], a["lon"] = round(eerste["lat"], 5), round(eerste["lon"], 5)
             tel["wd_plek_uit_osm"] += 1
@@ -871,6 +875,7 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel):
             "lon": round(eerste["lon"], 5),
             "rcdb": w.get("rcdb"),
             "_osm_ids": [o["id"] for o in groep],
+            "_osm_fotos": osm_fotos(groep),
             "_namen": {n for o in groep for n in o["varianten"]} | {eerste["naam"]},
         }
         nieuw.append({k: v for k, v in a.items() if v is not None})
@@ -901,6 +906,291 @@ def zoek_dubbel_extra(alle, extra, tel):
                 print(f"  extra.json: {x['id']} ({x['naam']}) staat nu ook in de bronnen als {a['id']}")
                 break
     return aliassen
+
+
+# ---------------------------------------------------------------------------
+# Foto's: alleen vrij gelicenseerde bestanden op Wikimedia Commons
+# ---------------------------------------------------------------------------
+# Volgorde per achtbaan:
+#   1. Wikidata P18
+#   2. een geschikte foto uit de Commons-categorie (Wikidata P373)
+#   3. de vrij gelicenseerde hoofdafbeelding van het Wikipedia-artikel
+#   4. de image- of wikimedia_commons-tag uit OpenStreetMap
+# Daarna wordt elk gekozen bestand bij Commons gecontroleerd: het moet er echt
+# staan en een vrije licentie hebben. Alleen de bestandsnaam wordt bewaard.
+# Je eigen foto (in gereden.json) gaat op de site altijd voor.
+
+COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+WIKIPEDIA_TALEN = ["nl", "en", "de", "fr", "es", "it", "pl", "sv", "pt", "ja", "zh"]
+GEEN_FOTO = {
+    "logo", "map", "kaart", "karte", "plan", "diagram", "schema", "layout", "sign", "signage",
+    "poster", "flyer", "ticket", "lego", "model", "modell", "minecraft", "render", "rendering",
+    "icon", "stamp", "coin", "flag", "screenshot",
+}
+NIET_VRIJ = re.compile(r"non[- ]?free|fair[ _-]?use|all rights reserved", re.I)
+
+
+def mediawiki(url, params, pogingen=4):
+    """Vraag aan een MediaWiki-API (Commons, Wikipedia), met wachten bij drukte."""
+    body = urllib.parse.urlencode({"format": "json", "formatversion": "2", "maxlag": "5", **params}).encode()
+    for poging in range(pogingen):
+        try:
+            verzoek = urllib.request.Request(url, data=body, headers={
+                "User-Agent": USER_AGENT, "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            })
+            with urllib.request.urlopen(verzoek, timeout=60) as antwoord:
+                data = json.load(antwoord)
+            fout = data.get("error") or {}
+            if fout.get("code") == "maxlag" and poging < pogingen - 1:
+                time.sleep(5 * (poging + 1))
+                continue
+            if fout:
+                raise ValueError(fout.get("info") or fout.get("code"))
+            return data
+        except urllib.error.HTTPError as fout:
+            if fout.code in (429, 500, 502, 503, 504) and poging < pogingen - 1:
+                time.sleep(int(fout.headers.get("Retry-After") or 0) or 10 * (poging + 1))
+                continue
+            raise
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
+            if poging < pogingen - 1:
+                time.sleep(5 * (poging + 1))
+                continue
+            raise
+    raise RuntimeError(f"{url} gaf geen antwoord")
+
+
+def nette_bestandsnaam(naam):
+    naam = re.split(r"[?#]", naam, 1)[0].replace("_", " ").strip()
+    return naam[:1].upper() + naam[1:] if naam else None
+
+
+def commons_bestand(waarde):
+    """Bestandsnaam op Commons uit een OSM-tag of link; None als het geen Commons-bestand is
+    (een foto op een andere site heeft geen bekende vrije licentie en wordt niet gebruikt)."""
+    s = urllib.parse.unquote(str(waarde or "").strip())
+    for patroon in (
+        r"https?://commons\.(?:m\.)?wikimedia\.org/wiki/(?:File|Image|Bestand|Datei|Fichier):(.+)$",
+        r"https?://upload\.wikimedia\.org/wikipedia/commons/(?:thumb/)?[0-9a-f]/[0-9a-f]{2}/([^/]+)",
+        r"https?://commons\.wikimedia\.org/wiki/Special:FilePath/(.+)$",
+        r"(?:File|Image|Bestand|Datei):(.+)$",
+    ):
+        m = re.match(patroon, s, re.I)
+        if m:
+            return nette_bestandsnaam(m.group(1))
+    return None
+
+
+def commons_categorie(waarde):
+    s = urllib.parse.unquote(str(waarde or "").strip())
+    m = re.match(r"(?:https?://commons\.(?:m\.)?wikimedia\.org/wiki/)?Category:(.+)$", s, re.I)
+    return nette_bestandsnaam(m.group(1)) if m else None
+
+
+def osm_fotos(groep):
+    uit = []
+    for o in groep:
+        for sleutel in ("wikimedia_commons", "image"):
+            for deel in (o["tags"].get(sleutel) or "").split(";"):
+                bestand, categorie = commons_bestand(deel), commons_categorie(deel)
+                if bestand:
+                    uit.append(("bestand", bestand))
+                elif categorie:
+                    uit.append(("categorie", categorie))
+    return uit
+
+
+def geschikte_foto(naam, info):
+    """Een gewone foto: JPEG, groot genoeg, liggend, en geen logo of plattegrond."""
+    breed, hoog = info.get("width") or 0, info.get("height") or 0
+    if info.get("mime") != "image/jpeg" or breed < 800 or hoog < 450:
+        return False
+    if not 1.1 <= breed / hoog <= 2.4:
+        return False
+    woorden = set(re.split(r"[\W_]+", naam.casefold()))
+    return not woorden & GEEN_FOTO
+
+
+def foto_uit_categorie(categorie):
+    data = mediawiki(COMMONS_API, {
+        "action": "query", "generator": "categorymembers", "gcmtitle": f"Category:{categorie}",
+        "gcmtype": "file", "gcmlimit": "100", "prop": "imageinfo", "iiprop": "size|mime",
+    })
+    beste = None
+    for pagina in data.get("query", {}).get("pages", []):
+        naam = pagina.get("title", "").split(":", 1)[-1]
+        info = (pagina.get("imageinfo") or [{}])[0]
+        if naam and geschikte_foto(naam, info):
+            score = (min(info["width"] * info["height"], 12_000_000), naam)
+            if beste is None or score > beste[0]:
+                beste = (score, naam)
+    return beste[1] if beste else None
+
+
+def haal_wd_fotobronnen(qids):
+    """Commons-categorie (P373) en Wikipedia-artikelen van achtbanen zonder P18."""
+    categorieen, artikelen = {}, defaultdict(dict)
+    wikis = " ".join(f"<https://{t}.wikipedia.org/>" for t in WIKIPEDIA_TALEN)
+    for stuk in in_stukjes(sorted(qids), 300):
+        waarden = " ".join(f"wd:{q}" for q in stuk)
+        sparql = PREFIXEN + f"""
+SELECT ?item ?cat ?artikel WHERE {{
+  VALUES ?item {{ {waarden} }}
+  {{ ?item wdt:P373 ?cat . }}
+  UNION
+  {{ VALUES ?wiki {{ {wikis} }} ?artikel schema:about ?item ; schema:isPartOf ?wiki . }}
+}}"""
+        for rij in vraag(sparql):
+            q = qid(waarde(rij, "item"))
+            if not q:
+                continue
+            if waarde(rij, "cat"):
+                categorieen.setdefault(q, waarde(rij, "cat"))
+            url = waarde(rij, "artikel")
+            if url and "/wiki/" in url:
+                taal = urllib.parse.urlparse(url).netloc.split(".")[0]
+                artikelen[q][taal] = urllib.parse.unquote(url.split("/wiki/", 1)[1]).replace("_", " ")
+        time.sleep(1)
+    return categorieen, artikelen
+
+
+def wikipedia_fotos(artikelen):
+    """Hoofdafbeelding van het artikel, alleen als die vrij gelicenseerd is (pilicense=free)."""
+    per_taal = defaultdict(lambda: defaultdict(list))
+    for q, titels in artikelen.items():
+        for taal, titel in titels.items():
+            per_taal[taal][titel].append(q)
+    gevonden = defaultdict(dict)
+    for taal, titels in per_taal.items():
+        for stuk in in_stukjes(sorted(titels), 50):
+            data = mediawiki(f"https://{taal}.wikipedia.org/w/api.php", {
+                "action": "query", "prop": "pageimages", "piprop": "name", "pilicense": "free",
+                "redirects": "1", "titles": "|".join(stuk),
+            })
+            query = data.get("query", {})
+            terug = {s: s for s in stuk}
+            for soort in ("normalized", "redirects"):
+                for n in query.get(soort, []):
+                    terug[n["to"]] = terug.get(n["from"], n["from"])
+            for pagina in query.get("pages", []):
+                if pagina.get("pageimage"):
+                    for q in titels.get(terug.get(pagina["title"], pagina["title"]), []):
+                        gevonden[q][taal] = nette_bestandsnaam(pagina["pageimage"])
+            time.sleep(0.5)
+    return {q: [per[t] for t in WIKIPEDIA_TALEN if t in per] for q, per in gevonden.items()}
+
+
+def controleer_licenties(bestanden):
+    """Welke bestanden staan echt op Commons, met een vrije licentie?"""
+    goed = set()
+    for stuk in in_stukjes(sorted(bestanden), 50):
+        data = mediawiki(COMMONS_API, {
+            "action": "query", "prop": "imageinfo", "iiprop": "extmetadata|mime",
+            "iiextmetadatafilter": "LicenseShortName|License|UsageTerms|NonFree",
+            "titles": "|".join(f"File:{b}" for b in stuk),
+        })
+        query = data.get("query", {})
+        terug = {f"File:{b}": b for b in stuk}
+        for n in query.get("normalized", []):
+            terug[n["to"]] = terug.get(n["from"])
+        for pagina in query.get("pages", []):
+            if pagina.get("missing") or pagina.get("invalid"):
+                continue
+            info = (pagina.get("imageinfo") or [{}])[0]
+            meta = info.get("extmetadata") or {}
+            licentie = " ".join(str((meta.get(k) or {}).get("value") or "") for k in ("LicenseShortName", "License", "UsageTerms"))
+            niet_vrij = str((meta.get("NonFree") or {}).get("value") or "").strip().lower() in ("true", "1", "yes")
+            if niet_vrij or not licentie.strip() or NIET_VRIJ.search(licentie):
+                continue
+            if not str(info.get("mime") or "").startswith("image/"):
+                continue
+            if terug.get(pagina.get("title")):
+                goed.add(terug[pagina["title"]])
+        time.sleep(0.5)
+    return goed
+
+
+def zoek_fotos(alle, wd_ids, vorige_per_id, tel):
+    print("Foto's zoeken…")
+    bronnen = {a["id"]: [] for a in alle}
+    for a in alle:
+        if a.get("foto"):
+            bronnen[a["id"]].append(("p18" if a["id"] in wd_ids else "vorige", a["foto"]))
+    fout = False
+
+    zonder = [a["id"] for a in alle if a["id"] in wd_ids and not a.get("foto")]
+    try:
+        categorieen, artikelen = haal_wd_fotobronnen(zonder) if zonder else ({}, {})
+    except Exception as e:  # noqa: BLE001
+        print(f"  Commons-categorieën en artikelen niet opgehaald: {e}")
+        categorieen, artikelen, fout = {}, {}, True
+    print(f"  {len(zonder)} Wikidata-banen zonder P18: {len(categorieen)} met een Commons-categorie, {len(artikelen)} met een Wikipedia-artikel")
+
+    def uit_categorie(aid, categorie, bron):
+        nonlocal fout
+        try:
+            f = foto_uit_categorie(categorie)
+        except Exception as e:  # noqa: BLE001
+            print(f"  categorie {categorie}: {e}")
+            fout = True
+            return
+        if f:
+            bronnen[aid].append((bron, f))
+        time.sleep(0.3)
+
+    for i, (aid, categorie) in enumerate(sorted(categorieen.items()), 1):
+        if i % 50 == 0:
+            print(f"  categorieën {i}/{len(categorieen)}")
+        uit_categorie(aid, categorie, "categorie")
+
+    try:
+        for q, lijst in wikipedia_fotos(artikelen).items():
+            bronnen[q].extend(("wikipedia", f) for f in lijst)
+    except Exception as e:  # noqa: BLE001
+        print(f"  Wikipedia-afbeeldingen niet opgehaald: {e}")
+        fout = True
+
+    for a in alle:
+        for soort, w in a.get("_osm_fotos", []):
+            if soort == "bestand":
+                bronnen[a["id"]].append(("osm", w))
+    for a in alle:
+        if not bronnen[a["id"]]:
+            for soort, w in a.get("_osm_fotos", []):
+                if soort == "categorie":
+                    uit_categorie(a["id"], w, "osm")
+                    break
+
+    alle_bestanden = {f for lijst in bronnen.values() for _, f in lijst}
+    try:
+        goed = controleer_licenties(alle_bestanden)
+        gecontroleerd = True
+    except Exception as e:  # noqa: BLE001
+        print(f"  Licenties niet te controleren: {e}. Alleen P18 en eerder gecontroleerde foto's blijven.")
+        goed, gecontroleerd, fout = set(), False, True
+    if gecontroleerd:
+        print(f"  {len(goed)} van de {len(alle_bestanden)} bestanden staan op Commons met een vrije licentie")
+        tel["foto_afgekeurd"] = len(alle_bestanden) - len(goed)
+
+    for a in alle:
+        keuze = None
+        for bron, f in bronnen[a["id"]]:
+            # Gecontroleerd: alleen vrije bestanden die echt op Commons staan.
+            # Niet te controleren: alleen P18 en foto's die eerder al goedgekeurd waren.
+            toegestaan = f in goed if gecontroleerd else bron in ("p18", "vorige")
+            if toegestaan:
+                keuze = (bron, f)
+                break
+        if keuze:
+            a["foto"] = keuze[1]
+            tel[f"foto_{keuze[0]}"] += 1
+            continue
+        a.pop("foto", None)
+        oud = (vorige_per_id.get(a["id"]) or {}).get("foto")
+        if fout and oud:
+            a["foto"] = oud  # iets lukte niet: de foto van de vorige keer blijft
+            tel["foto_vorige"] += 1
 
 
 # ---------------------------------------------------------------------------
@@ -1023,6 +1313,8 @@ def bouw(vorige, tel):
         else:
             print(f"  Let op: {i} uit gereden.json is onbekend")
 
+    zoek_fotos(alle, {a["id"] for a in wd}, vorige_per_id, tel)
+
     for a in alle:
         for k in [k for k in a if k.startswith("_")]:
             del a[k]
@@ -1092,6 +1384,12 @@ def samenvatting(tel, grootte):
         f"Wikidata-banen met plek uit OSM:      {tel['wd_plek_uit_osm']:>6}",
         f"Behouden voor gereden.json:           {tel['behouden_voor_gereden']:>6}",
         f"Met foto:                             {tel['met_foto']:>6} ({tel['met_foto'] / max(1, tel['totaal']):.0%})",
+        f"  uit Wikidata P18:                   {tel['foto_p18']:>6}",
+        f"  uit de Commons-categorie:           {tel['foto_categorie']:>6}",
+        f"  uit het Wikipedia-artikel:          {tel['foto_wikipedia']:>6}",
+        f"  uit een OSM-tag:                    {tel['foto_osm']:>6}",
+        f"  van de vorige keer:                 {tel['foto_vorige']:>6}",
+        f"  afgekeurd (niet op Commons/vrij):   {tel['foto_afgekeurd']:>6}",
         f"Grootte achtbanen.json:               {grootte / 1e6:.2f} MB",
     ]
     tekst = "\n".join(regels)

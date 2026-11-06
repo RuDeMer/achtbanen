@@ -61,8 +61,10 @@
 
   // Eigen foto (pad of link) of een bestandsnaam op Wikimedia Commons
   function isEigenFoto(foto) { return /^(https?:|\.{0,2}\/|fotos\/)/.test(foto || ""); }
+  const netGeupload = new Map(); // pad -> blob-adres, zodat een nieuwe foto meteen te zien is
   function fotoBron(foto, breedte) {
     if (!foto) return null;
+    if (netGeupload.has(foto)) return netGeupload.get(foto);
     if (isEigenFoto(foto)) return foto;
     return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(foto)}?width=${breedte}`;
   }
@@ -134,7 +136,7 @@
   }
 
   // Twee ritten zijn dezelfde als alle velden gelijk zijn (volgorde maakt niet uit)
-  const vorm = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
+  const vorm = (o) => JSON.stringify(Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => [k, o[k]]));
   const vindRit = (lijst, rit) => lijst.findIndex((x) => x && vorm(x) === vorm(rit));
 
   /* ---------- GitHub: rechtstreeks opslaan met je token ---------- */
@@ -229,7 +231,7 @@
       try {
         const sha = await schrijfBestand(pad, naarBase64(tekst), bestand && bestand.sha, bericht);
         onthoudGeschreven(pad, tekst, sha);
-        return data;
+        return JSON.parse(tekst); // precies wat er nu in het bestand staat
       } catch (e) {
         const conflict = e.status === 409 || (e.status === 422 && /sha/i.test(e.bericht));
         if (!conflict || poging >= 4) throw e;
@@ -938,7 +940,17 @@
         <label data-wanneer="datum">Datum <input type="date" id="rit-datum" max="${vandaag()}" value="${esc(wanneer === "datum" ? was.slice(0, 10) : vandaag())}"></label>
         <label>Cijfer van 1 tot 10 (mag leeg) <input type="text" id="rit-cijfer" inputmode="decimal" placeholder="bijvoorbeeld 8,5" value="${esc(v.cijfer != null ? String(v.cijfer).replace(".", ",") : "")}"></label>
         <label>Notitie (mag leeg) <input type="text" id="rit-notitie" maxlength="200" placeholder="Bijvoorbeeld: voorste rij, regen" value="${esc(v.notitie || "")}"></label>
-        <label>Eigen foto in de map fotos (mag leeg) <input type="text" id="rit-foto" placeholder="bijvoorbeeld baron.jpg" value="${esc((v.foto || "").replace(/^fotos\//, ""))}"></label>
+        <div class="foto-kiezen">
+          <span class="foto-kiezen-titel">Eigen foto (mag leeg)</span>
+          <div class="foto-kiezen-rij">
+            <span class="foto-voorbeeld" id="rit-voorbeeld">${v.foto ? `<img src="${esc(fotoBron(v.foto, 300))}" alt="Je foto"${eigenPad(v.foto) ? ` data-eigen="${esc(eigenPad(v.foto))}"` : ""}>` : ""}</span>
+            <span class="foto-kiezen-knoppen">
+              <label class="knop knop-licht knop-bestand"><span id="rit-bestand-tekst">${v.foto ? "Andere foto kiezen" : "Kies een foto"}</span><input class="sr" type="file" id="rit-bestand" accept="image/*"></label>
+              <button class="knop-klein knop-gevaar" type="button" id="rit-foto-weg"${v.foto ? "" : " hidden"}>Foto weghalen</button>
+            </span>
+          </div>
+          <p class="klein" id="rit-foto-info">${v.foto ? "" : "Van je telefoon of computer. De site maakt hem eerst kleiner (maximaal 1600 pixels breed)."}</p>
+        </div>
         <p class="fout" id="rit-fout" role="alert"></p>
         <div class="knoppen">
           <button class="knop" type="submit" id="rit-opslaan">${oud ? "Wijziging opslaan" : "Zet op mijn lijst"}</button>
@@ -984,28 +996,125 @@
       if (ruwCijfer && !(cijfer >= 1 && cijfer <= 10)) throw new Error("Een cijfer moet tussen 1 en 10 liggen.");
       zet("cijfer", ruwCijfer ? cijfer : "");
       zet("notitie", veld("rit-notitie").value.trim());
-      const foto = veld("rit-foto").value.trim().replace(/^\/?fotos\//, "");
-      zet("foto", foto ? `fotos/${foto}` : "");
+      if (fotoKeuze.weg) delete rit.foto;
+      for (const k of Object.keys(rit)) if (rit[k] === undefined) delete rit[k];
       return rit;
     }
+
+    // Eigen foto: meteen verkleinen in de browser, uploaden pas bij Opslaan
+    const fotoKeuze = { blob: null, weg: false };
+    const voorbeeld = veld("rit-voorbeeld");
+    voorbeeld.addEventListener("error", (e) => { if (e.target.tagName === "IMG") fotoMislukt(e.target); }, true);
+    veld("rit-bestand").addEventListener("change", async (e) => {
+      const bestand = e.target.files && e.target.files[0];
+      if (!bestand) return;
+      const info = veld("rit-foto-info");
+      info.textContent = "Foto verkleinen…";
+      veld("rit-fout").textContent = "";
+      try {
+        const klein = await verkleinFoto(bestand, 1600);
+        fotoKeuze.blob = klein.blob;
+        fotoKeuze.weg = false;
+        voorbeeld.innerHTML = "";
+        voorbeeld.appendChild(Object.assign(new Image(), { src: URL.createObjectURL(klein.blob), alt: "Je foto" }));
+        info.textContent = `Klaar: ${klein.breedte} × ${klein.hoogte} pixels, ${getal(klein.blob.size / 1024)} kB. Wordt geüpload als je opslaat.`;
+        veld("rit-foto-weg").hidden = false;
+        veld("rit-bestand-tekst").textContent = "Andere foto kiezen";
+      } catch (fout) {
+        console.error(fout);
+        info.textContent = "";
+        veld("rit-fout").textContent = fout.message;
+      }
+      e.target.value = "";
+    });
+    veld("rit-foto-weg").addEventListener("click", () => {
+      fotoKeuze.blob = null;
+      fotoKeuze.weg = true;
+      voorbeeld.innerHTML = "";
+      veld("rit-foto-weg").hidden = true;
+      veld("rit-bestand-tekst").textContent = "Kies een foto";
+      veld("rit-foto-info").textContent = v.foto ? "De foto wordt van deze rit gehaald als je opslaat. Het bestand blijft in de map fotos staan." : "";
+    });
 
     veld("rit-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       let rit;
       try { rit = leesFormulier(); } catch (fout) { veld("rit-fout").textContent = fout.message; return; }
-      const gelukt = await metKnop(veld("rit-opslaan"), veld("rit-fout"), "Opslaan…", () =>
-        bewaarRitten(data, (lijst) => {
+      const knop = veld("rit-opslaan");
+      const gelukt = await metKnop(knop, veld("rit-fout"), "Opslaan…", async () => {
+        if (fotoKeuze.blob) {
+          knop.textContent = "Foto uploaden…";
+          rit.foto = await uploadFoto(a, fotoKeuze.blob);
+          fotoKeuze.blob = null; // niet nog eens uploaden als het opslaan hierna mislukt
+          knop.textContent = "Opslaan…";
+        }
+        await bewaarRitten(data, (lijst) => {
           if (!oud) return [...lijst, rit];
           const i = vindRit(lijst, oud);
           if (i < 0) throw new Error("Deze rit is intussen op een andere plek gewijzigd. Laad de pagina opnieuw en probeer het nog eens.");
           lijst[i] = rit;
           return lijst;
-        }, `${oud ? "Rit bewerkt" : "Rit toegevoegd"}: ${a.naam}`));
+        }, `${oud ? "Rit bewerkt" : "Rit toegevoegd"}: ${a.naam}`);
+      });
       if (!gelukt) return;
       d.close();
       klaar();
       toast("Opgeslagen. Over een paar minuten staat het ook op de openbare site.", true);
     });
+  }
+
+  // Maakt een foto kleiner in de browser (maximaal 1600 pixels breed) en slaat hem op als JPEG.
+  // Daarbij verdwijnen ook de gegevens in de foto, zoals de plek waar hij gemaakt is.
+  async function verkleinFoto(bestand, maxBreedte) {
+    if (bestand.type && !/^image\//.test(bestand.type)) throw new Error("Dit bestand is geen foto.");
+    let beeld, adres;
+    try {
+      beeld = await createImageBitmap(bestand, { imageOrientation: "from-image" });
+    } catch (e) {
+      adres = URL.createObjectURL(bestand);
+      beeld = await new Promise((klaar, mis) => {
+        const img = new Image();
+        img.onload = () => klaar(img);
+        img.onerror = () => mis(new Error("Deze foto kan de browser niet openen. Probeer een JPEG-foto."));
+        img.src = adres;
+      });
+    }
+    const schaal = Math.min(1, maxBreedte / beeld.width);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(beeld.width * schaal);
+    canvas.height = Math.round(beeld.height * schaal);
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(beeld, 0, 0, canvas.width, canvas.height);
+    if (beeld.close) beeld.close();
+    if (adres) URL.revokeObjectURL(adres);
+    const blob = await new Promise((klaar) => canvas.toBlob(klaar, "image/jpeg", 0.85));
+    if (!blob) throw new Error("Het verkleinen van de foto lukte niet.");
+    return { blob, breedte: canvas.width, hoogte: canvas.height };
+  }
+
+  const blobNaarBase64 = (blob) => new Promise((klaar, mis) => {
+    const lezer = new FileReader();
+    lezer.onload = () => klaar(String(lezer.result).split(",")[1]);
+    lezer.onerror = () => mis(lezer.error);
+    lezer.readAsDataURL(blob);
+  });
+
+  async function uploadFoto(a, blob) {
+    const d = new Date();
+    const tijd = `${vandaag().replace(/-/g, "")}-${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
+    const base64 = await blobNaarBase64(blob);
+    for (let n = 1; ; n++) {
+      const pad = `fotos/${slug(a.naam) || "achtbaan"}-${tijd}${n > 1 ? `-${n}` : ""}.jpg`;
+      try {
+        await schrijfBestand(pad, base64, null, `Foto toegevoegd: ${a.naam}`);
+        netGeupload.set(pad, URL.createObjectURL(blob));
+        return pad;
+      } catch (e) {
+        // Bestaat er al een foto met deze naam (zelfde seconde), dan een nummer erachter
+        if (!(e.status === 422 && /sha/i.test(e.bericht)) || n >= 5) throw e;
+      }
+    }
   }
 
   async function verwijderRit(a, data, rit, knop, klaar) {
