@@ -500,7 +500,7 @@ GEEN_ACHTBAAN = [
         r"wildwasser|wild[\s-]*water(?![\s-]*coaster)|rapids\b|rafting|\bflume|log[\s-]*ride|rutsche"
         r"|water[\s-]*slides?|waterslide|glijbaan|wildwaterbaan|boomstam|водн", re.I)),
     ("andere attractie", re.compile(
-        r"tyrolienne|zip[\s-]*line|skate|go[\s-]*kart|\bkart\b|karussell|carousel|carrousel|riesenrad"
+        r"tyrolienne|zip[\s-]*line|go[\s-]*kart|\bkart\b|karussell|carousel|carrousel|riesenrad"
         r"|ferris|grande roue|traktor|tractor|oldtimer|autoscooter|bumper|spielplatz|playground|speeltuin"
         r"|\b4-?d\b|dark[\s-]*ride|geisterbahn|\breise\b|zauberreise|kirche|church|[ée]glise|test track", re.I)),
 ]
@@ -840,13 +840,13 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel, niet_achtbaa
                 vorige_osm[k].append(a)
     gebruikt = {o["id"] for o in osm} & vorige_ids
 
-    # 0. De wikidata-tag: wijst hij naar een park, dan is dat een vergissing (negeren);
-    #    wijst hij naar iets wat volgens Wikidata geen achtbaan is, dan valt het object weg
+    # 0. De wikidata-tag: wijst hij naar een park, dan is dat een vergissing (negeren).
+    #    Wijst hij naar een item dat niet in de achtbanenlijst staat (vaak een baan met een
+    #    bouwmodel als type, zoals een Vekoma Boomerang), dan blijft het een OSM-baan, met
+    #    dat item erbij voor de Wikipedia-tekst.
     for o in osm:
         if o["q"] in park_qs:
             o["q"] = None
-        elif o["q"] in niet_achtbaan and not o["geen"]:
-            o["geen"] = "volgens Wikidata geen achtbaan"
 
     # 1. Via de wikidata-tag, als het object niet ver van de Wikidata-plek ligt
     for o in osm:
@@ -963,16 +963,26 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel, niet_achtbaa
         groep.sort(key=lambda o: keuze_score(o, vorige_ids))
         banen = [o for o in groep if not o["station"]]
         if not banen:
-            tel["osm_alleen_station"] += len(groep)  # een los station is geen achtbaan
-            WEGGELATEN.append(("los station", groep[0]["naam"], groep[0]["park"] and groep[0]["park"]["naam"], groep[0]["id"]))
-            continue
+            # Alleen een station: vaak staat de baan in OSM alleen zo ("Velociraptor Station",
+            # of een station met de naam van de baan). Dan telt het als de baan, zonder "Station".
+            # Een kaal "Bergstation" of "Talstation" is geen achtbaan.
+            kaal = [o for o in groep if not STATION.search(o["naam"]) or zonder_station(o["naam"])]
+            if not kaal:
+                tel["osm_alleen_station"] += len(groep)
+                WEGGELATEN.append(("los station", groep[0]["naam"], groep[0]["park"] and groep[0]["park"]["naam"], groep[0]["id"]))
+                continue
+            banen = [dict(o, naam=zonder_station(o["naam"]) or o["naam"]) for o in kaal]
         tel["osm_dubbel_binnen_osm"] += len(groep) - 1
         eerste, baan = groep[0], banen[0]
         w = osm_waarden(groep)
         p = baan["park"] or eerste["park"]
-        if not p and not w.get("rcdb"):
-            # Niet in een pretpark en geen RCDB-nummer: meestal een zomerrodelbaan of
-            # iets anders dan een achtbaan. (Staat hij in Wikidata, dan blijft hij gewoon.)
+        bewijs = w.get("rcdb") or any(
+            o["tags"].get("roller_coaster") == "track" or o["tags"].get(k)
+            for o in groep for k in ("roller_coaster:type", "manufacturer", "height", "length", "opening_date", "start_date"))
+        if not p and not bewijs:
+            # Niet in een pretpark en niets wat op een achtbaan wijst (geen spoor, type,
+            # fabrikant, hoogte, jaar of RCDB-nummer): meestal iets anders.
+            # (Staat hij in Wikidata, dan blijft hij gewoon.)
             tel["osm_buiten_park"] += len(groep)
             WEGGELATEN.append(("buiten een pretpark", baan["naam"], None, baan["id"]))
             continue
@@ -1002,6 +1012,7 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel, niet_achtbaa
             "lat": round(baan["lat"], 5),
             "lon": round(baan["lon"], 5),
             "rcdb": w.get("rcdb"),
+            "wikidata": next((o["q"] for o in groep if o["q"] and o["q"] not in per_q), None),
             "_osm_ids": [o["id"] for o in groep],
             "_osm_fotos": osm_fotos(groep),
             "_namen": {n for o in groep for n in o["varianten"]} | {baan["naam"]},
@@ -1482,7 +1493,7 @@ def bouw(vorige, tel):
             parkachtig = welke_zijn_parken(vreemd - park_qs, (PRETPARK, DIERENTUIN))
             park_qs |= parkachtig
             niet_achtbaan = vreemd - park_qs
-            print(f"  {len(vreemd)} wikidata-tags wijzen niet naar een achtbaan: {len(vreemd & park_qs)} naar een park, {len(niet_achtbaan)} naar iets anders")
+            print(f"  {len(vreemd)} wikidata-tags wijzen niet naar een baan uit de lijst: {len(vreemd & park_qs)} naar een park (genegeerd), {len(niet_achtbaan)} naar iets anders (blijft OSM-baan)")
         except RuntimeError as fout:
             print(f"  wikidata-tags niet gecontroleerd: {fout}")
 
@@ -1536,7 +1547,8 @@ def bouw(vorige, tel):
                 osm_vr.append(a)
             elif geen_achtbaan(a["naam"], {}) or (is_station(a["naam"], {}) and not zonder_station(a["naam"])):
                 tel["osm_geen_achtbaan_vorige_keer"] += 1
-            elif not a.get("park") and not a.get("rcdb"):
+            elif not a.get("park") and not any(a.get(k) for k in ("rcdb", "hoogte", "lengte", "fabrikant", "geopend")) \
+                    and a.get("type", "Achtbaan") == "Achtbaan":
                 tel["osm_buiten_park"] += 1
             else:
                 nieuw.append(a)
@@ -1612,7 +1624,7 @@ def per_naam(lijst, q):
 
 # Velden die alleen de attractiepagina gebruikt; gaan naar details.json als het
 # hoofdbestand te groot wordt.
-DETAILVELDEN = ("duur", "rcdb", "osm")
+DETAILVELDEN = ("duur", "rcdb", "osm", "wikidata")
 
 
 def schrijf(achtbanen, aliassen, tel, voorstellen=None):
