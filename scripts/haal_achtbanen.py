@@ -813,6 +813,7 @@ class Unie:
 
 
 TAG_AFSTAND = 5000  # meter: verder weg dan dit is een wikidata-tag waarschijnlijk fout
+WEGGELATEN = []  # (reden, naam, park, id), voor de uitleg met ACHTBANEN_UITLEG=1
 
 
 def deelt_woord(a, b):
@@ -937,6 +938,7 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel, niet_achtbaa
     for o in rest:
         if o["geen"]:
             tel[f"osm_geen_{o['geen']}"] += 1
+            WEGGELATEN.append((o["geen"], o["naam"], o["park"] and o["park"]["naam"], o["id"]))
     vr = [o for o in rest if o["vr"] and not o["geen"]]
     rest = [o for o in rest if not o["geen"] and not o["vr"]]
     unie = Unie(len(rest))
@@ -962,6 +964,7 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel, niet_achtbaa
         banen = [o for o in groep if not o["station"]]
         if not banen:
             tel["osm_alleen_station"] += len(groep)  # een los station is geen achtbaan
+            WEGGELATEN.append(("los station", groep[0]["naam"], groep[0]["park"] and groep[0]["park"]["naam"], groep[0]["id"]))
             continue
         tel["osm_dubbel_binnen_osm"] += len(groep) - 1
         eerste, baan = groep[0], banen[0]
@@ -971,6 +974,7 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel, niet_achtbaa
             # Niet in een pretpark en geen RCDB-nummer: meestal een zomerrodelbaan of
             # iets anders dan een achtbaan. (Staat hij in Wikidata, dan blijft hij gewoon.)
             tel["osm_buiten_park"] += len(groep)
+            WEGGELATEN.append(("buiten een pretpark", baan["naam"], None, baan["id"]))
             continue
         nieuwe_id = eerste["id"]
         if nieuwe_id not in vorige_ids:
@@ -1044,6 +1048,7 @@ def voeg_vr_samen(vr, alle, tel):
             print(f"  VR-versie {item['naam']} ({item['id']}) hoort bij {doel['naam']} ({doel['id']})")
         else:
             tel["vr_weg"] += 1
+            WEGGELATEN.append(("VR-versie zonder echte baan", item["naam"], item.get("park") if isinstance(item.get("park"), str) else None, item["id"]))
             print(f"  VR-versie {item['naam']} ({item['id']}) zonder bijpassende baan: weggelaten")
     return uit
 
@@ -1724,6 +1729,10 @@ def main():
     grootte = schrijf(achtbanen, aliassen, tel, voorstellen)
     print(f"\n✓ {len(achtbanen)} achtbanen opgeslagen in {UITVOER.relative_to(MAP)}")
     samenvatting(tel, grootte)
+    if os.environ.get("ACHTBANEN_UITLEG") == "1":
+        print("\nWeggelaten omdat het geen achtbaan is:")
+        for reden, naam, park, i in sorted(WEGGELATEN, key=lambda w: (w[0], str(w[1]).casefold())):
+            print(f"  [{reden}] {naam}{f' ({park})' if park else ''} {i}")
     return 0
 
 
