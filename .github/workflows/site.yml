@@ -30,7 +30,7 @@ jobs:
           # Altijd de nieuwste versie, ook als er net een andere run iets heeft opgeslagen
           ref: main
 
-      - name: Achtbanen ophalen bij Wikidata en opslaan
+      - name: Achtbanen ophalen bij Wikidata en OpenStreetMap en opslaan
         # Bij een gewone wijziging alleen als de lijst er nog niet is,
         # bij de maandelijkse of handmatige run altijd.
         if: github.event_name != 'push' || hashFiles('data/achtbanen.json') == ''
@@ -38,15 +38,20 @@ jobs:
           python3 scripts/haal_achtbanen.py
           # Nieuwe lijst apart zetten, de nieuwste versie van GitHub ophalen
           # en de lijst er daarna overheen zetten. Zo kan er geen conflict ontstaan.
+          # (details.json bestaat alleen als achtbanen.json te groot werd.)
           cp data/achtbanen.json "$RUNNER_TEMP/achtbanen.json"
+          rm -f "$RUNNER_TEMP/details.json"
+          if [ -f data/details.json ]; then cp data/details.json "$RUNNER_TEMP/details.json"; fi
           git fetch origin main
           git reset --hard origin/main
           cp "$RUNNER_TEMP/achtbanen.json" data/achtbanen.json
+          if [ -f "$RUNNER_TEMP/details.json" ]; then cp "$RUNNER_TEMP/details.json" data/details.json; else rm -f data/details.json; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/achtbanen.json
+          git add -A data/achtbanen.json
+          git add -A data/details.json 2>/dev/null || true
           if ! git diff --cached --quiet; then
-            git commit -m "Achtbanen bijgewerkt vanuit Wikidata"
+            git commit -m "Achtbanen bijgewerkt vanuit Wikidata en OpenStreetMap"
             git push origin HEAD:main
           fi
 

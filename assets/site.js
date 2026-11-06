@@ -279,11 +279,15 @@
         laadEigen("data/extra.json"),
         laadEigen("data/gereden.json"),
       ]);
-      const lijst = [...(basis.achtbanen || []), ...((extra && extra.achtbanen) || [])]
+      // Verwijzingen: oude ids (bijvoorbeeld een OSM-baan die nu in Wikidata staat, of een
+      // regel uit extra.json die nu in de bronnen staat) wijzen naar de achtbaan van nu
+      const aliassen = basis.aliassen || {};
+      const lijst = [...(basis.achtbanen || []), ...((extra && extra.achtbanen) || []).filter((a) => a && !aliassen[a.id])]
         .filter((a) => a && a.id && a.naam);
       const perId = new Map(lijst.map((a) => [a.id, a]));
+      for (const [oud, nieuw] of Object.entries(aliassen)) if (!perId.has(oud) && perId.has(nieuw)) perId.set(oud, perId.get(nieuw));
       for (const a of lijst) a._zoek = zoekbaar([a.naam, a.park, a.land, a.fabrikant, a.type].join(" "));
-      const data = { lijst, perId, bijgewerkt: basis.bijgewerkt };
+      const data = { lijst, perId, bijgewerkt: basis.bijgewerkt, details: basis.details, extra: (extra && extra.achtbanen) || [] };
       zetRitten(data, (mijn && mijn.gereden) || []);
       if (apiWaarschuwing) setTimeout(() => toast(apiWaarschuwing, true), 400);
       return data;
@@ -588,7 +592,8 @@
       if (!n) {
         el.raster.innerHTML = `<div class="leeg">
           <p>Geen achtbanen gevonden met deze zoekopdracht en filters.</p>
-          <button class="knop knop-licht" type="button" id="wis-alles">Filters wissen</button></div>`;
+          <div class="knoppen-rij"><button class="knop knop-licht" type="button" id="wis-alles">Filters wissen</button>
+          ${beheer ? '<button class="knop" type="button" id="ontbreekt-leeg">Achtbaan ontbreekt</button>' : ""}</div></div>`;
         $("#wis-alles").addEventListener("click", wisAlles);
         el.meer.hidden = true;
         return;
@@ -627,7 +632,8 @@
       const balk = $("#beheer-balk"), onder = $("#afvink-balk");
       if (!af.aan) {
         balk.innerHTML = `<button class="knop knop-licht" type="button" id="afvink-aan">Afvinken</button>
-          <span class="klein">Snel een hele rij achtbanen op je lijst zetten.</span>`;
+          <button class="knop knop-licht" type="button" id="ontbreekt">Achtbaan ontbreekt</button>
+          <span class="klein">Snel een hele rij achtbanen op je lijst zetten, of er zelf een toevoegen.</span>`;
         onder.hidden = true;
         return;
       }
@@ -696,6 +702,7 @@
         }
         if (knop.id === "afvink-niets") { af.gekozen.clear(); bewaarAfvink(); toon(false); }
         if (knop.id === "afvink-opslaan") slaAfvinkOp(knop);
+        if (knop.id === "ontbreekt" || knop.id === "ontbreekt-leeg") openOntbreektVenster(data, st.q);
       });
       el.raster.addEventListener("change", (e) => {
         const vak = e.target.closest(".afvink-vak");
@@ -874,7 +881,9 @@
     const links = [];
     if (/^Q\d+$/.test(a.id)) links.push(`<a href="https://www.wikidata.org/wiki/${a.id}">Wikidata</a>`);
     if (a.rcdb) links.push(`<a href="https://rcdb.com/${encodeURIComponent(a.rcdb)}.htm">RCDB</a>`);
-    if (a.lat != null) links.push(`<a href="https://www.openstreetmap.org/?mlat=${a.lat}&mlon=${a.lon}#map=16/${a.lat}/${a.lon}">OpenStreetMap</a>`);
+    const osm = a.osm || (/^osm-(node|way|relation)-\d+$/.test(a.id) ? a.id.slice(4).replace("-", "/") : "");
+    if (osm) links.push(`<a href="https://www.openstreetmap.org/${osm}">OpenStreetMap</a>`);
+    else if (a.lat != null) links.push(`<a href="https://www.openstreetmap.org/?mlat=${a.lat}&mlon=${a.lon}#map=16/${a.lat}/${a.lon}">OpenStreetMap</a>`);
     return `<section class="blok"><h2>Meer weten</h2><ul class="links">${links.map((l) => `<li>${l}</li>`).join("")}</ul></section>`;
   }
 
@@ -1013,6 +1022,131 @@
     toast("Verwijderd. Over een paar minuten is het ook van de openbare site af.", true);
   }
 
+  /* ---------- Venster: achtbaan ontbreekt (alleen beheer) ----------
+     Zet een achtbaan in data/extra.json. Staat hij later ook in Wikidata of
+     OpenStreetMap, dan verwijst het script je regel daarnaar; je ritten blijven gelden. */
+
+  const slug = (s) => zoekbaar(s).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+
+  function openOntbreektVenster(data, voorstel) {
+    const parken = new Map(), landen = new Set();
+    for (const a of data.lijst) {
+      if (a.land) landen.add(a.land);
+      if (a.park && !parken.has(a.park)) parken.set(a.park, a);
+    }
+    const opties = (lijst) => [...lijst].sort((x, y) => x.localeCompare(y, TAAL)).map((x) => `<option value="${esc(x)}"></option>`).join("");
+    const d = maakVenster("Achtbaan ontbreekt", `
+      <form method="dialog" class="formulier" id="nieuw-form" novalidate>
+        <label>Naam van de achtbaan <input type="text" id="nieuw-naam" required maxlength="100" value="${esc(voorstel || "")}"></label>
+        <label>Park (mag leeg) <input type="text" id="nieuw-park" list="nieuw-parken" maxlength="100" autocomplete="off"></label>
+        <datalist id="nieuw-parken">${opties(parken.keys())}</datalist>
+        <label>Land (mag leeg) <input type="text" id="nieuw-land" list="nieuw-landen" maxlength="60" autocomplete="off"></label>
+        <datalist id="nieuw-landen">${opties(landen)}</datalist>
+        <div class="twee-velden">
+          <label>Status <select id="nieuw-status"><option value="open">Open</option><option value="gesloten">Gesloten</option><option value="gepland">Komt nog</option></select></label>
+          <label>Geopend in (mag leeg) <input type="number" id="nieuw-geopend" inputmode="numeric" min="1880" max="${new Date().getFullYear() + 5}" placeholder="bijvoorbeeld 2004"></label>
+        </div>
+        <label>Fabrikant (mag leeg) <input type="text" id="nieuw-fabrikant" maxlength="60"></label>
+        <fieldset class="plek-velden">
+          <legend>Waar staat hij? (mag leeg)</legend>
+          <div class="twee-velden">
+            <label>Breedtegraad <input type="text" id="nieuw-lat" inputmode="decimal" placeholder="51,6497"></label>
+            <label>Lengtegraad <input type="text" id="nieuw-lon" inputmode="decimal" placeholder="5,0434"></label>
+          </div>
+          <button class="knop-klein" type="button" id="nieuw-hier">Gebruik mijn locatie</button>
+        </fieldset>
+        <label class="vinkje"><input type="checkbox" id="nieuw-gereden" checked> Meteen op mijn lijst zetten (zonder datum)</label>
+        <div id="nieuw-dubbel"></div>
+        <p class="fout" id="nieuw-fout" role="alert"></p>
+        <div class="knoppen">
+          <button class="knop" type="submit" id="nieuw-opslaan">Toevoegen</button>
+          <button class="knop knop-licht" type="button" id="nieuw-sluit">Annuleren</button>
+        </div>
+        <p class="klein">Komt in <code>data/extra.json</code> op GitHub. Nog mooier: zet hem ook op <a href="https://www.wikidata.org" target="_blank" rel="noopener">Wikidata</a> of <a href="https://www.openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a>, dan heeft iedereen er wat aan.</p>
+      </form>`);
+    const veld = (id) => $(`#${id}`, d);
+    veld("nieuw-sluit").addEventListener("click", () => d.close());
+
+    // Een bekend park kiezen vult het land in
+    veld("nieuw-park").addEventListener("change", () => {
+      const p = parken.get(veld("nieuw-park").value.trim());
+      if (p && p.land && !veld("nieuw-land").value) veld("nieuw-land").value = p.land;
+    });
+    veld("nieuw-hier").addEventListener("click", (e) => {
+      const knop = e.currentTarget;
+      if (!navigator.geolocation) { veld("nieuw-fout").textContent = "Je browser kan je locatie niet geven."; return; }
+      knop.disabled = true; knop.textContent = "Locatie zoeken…";
+      navigator.geolocation.getCurrentPosition((pos) => {
+        veld("nieuw-lat").value = String(pos.coords.latitude.toFixed(5)).replace(".", ",");
+        veld("nieuw-lon").value = String(pos.coords.longitude.toFixed(5)).replace(".", ",");
+        knop.disabled = false; knop.textContent = "Gebruik mijn locatie";
+      }, () => {
+        veld("nieuw-fout").textContent = "Je locatie kon niet bepaald worden. Vul hem zelf in of laat hem leeg.";
+        knop.disabled = false; knop.textContent = "Gebruik mijn locatie";
+      }, { enableHighAccuracy: true, timeout: 15000 });
+    });
+
+    let dubbelGezien = "";
+    veld("nieuw-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fout = veld("nieuw-fout");
+      fout.textContent = "";
+      const naam = veld("nieuw-naam").value.trim().replace(/\s+/g, " ");
+      const park = veld("nieuw-park").value.trim().replace(/\s+/g, " ");
+      if (!naam) { fout.textContent = "Vul de naam van de achtbaan in."; return; }
+      const coord = (id, max) => {
+        const s = veld(id).value.trim().replace(",", ".");
+        if (!s) return undefined;
+        const n = Number(s);
+        if (!isFinite(n) || Math.abs(n) > max) throw new Error("Deze coördinaten kloppen niet. Gebruik bijvoorbeeld 51,6497 en 5,0434, of laat ze leeg.");
+        return Math.round(n * 1e5) / 1e5;
+      };
+      let lat, lon;
+      try { lat = coord("nieuw-lat", 90); lon = coord("nieuw-lon", 180); } catch (f) { fout.textContent = f.message; return; }
+      if ((lat === undefined) !== (lon === undefined)) { fout.textContent = "Vul allebei de coördinaten in, of geen van beide."; return; }
+      const jaar = veld("nieuw-geopend").value.trim();
+      if (jaar && !/^\d{4}$/.test(jaar)) { fout.textContent = "Vul bij Geopend een jaar in, zoals 2004."; return; }
+
+      // Staat hij er misschien al in? Dan eerst even laten zien.
+      const sleutel = zoekbaar(naam).replace(/[^a-z0-9]/g, "");
+      const lijktOp = data.lijst.filter((a) => zoekbaar(a.naam).replace(/[^a-z0-9]/g, "") === sleutel &&
+        (!park || !a.park || zoekbaar(a.park) === zoekbaar(park)));
+      if (lijktOp.length && dubbelGezien !== naam + "|" + park) {
+        dubbelGezien = naam + "|" + park;
+        veld("nieuw-dubbel").innerHTML = `<p class="fout">Staat hij er misschien al in? ${lijktOp.slice(0, 5).map((a) =>
+          `<a href="${pagina(a)}">${esc(a.naam)}${a.park ? ` (${esc(a.park)})` : ""}</a>`).join(", ")}. Kies nog een keer Toevoegen als het echt een andere is.</p>`;
+        return;
+      }
+
+      const bekendPark = parken.get(park);
+      const basisId = "x-" + ([slug(naam), slug(park)].filter(Boolean).join("-") || "achtbaan");
+      let id = basisId;
+      for (let i = 2; data.perId.has(id) || data.extra.some((x) => x.id === id); i++) id = `${basisId}-${i}`;
+      const nieuw = {
+        id, naam,
+        park: park || undefined,
+        parkId: bekendPark && bekendPark.parkId ? bekendPark.parkId : undefined,
+        land: veld("nieuw-land").value.trim() || undefined,
+        fabrikant: veld("nieuw-fabrikant").value.trim() || undefined,
+        status: veld("nieuw-status").value,
+        geopend: jaar ? Number(jaar) : undefined,
+        lat, lon,
+      };
+      const ookRit = veld("nieuw-gereden").checked;
+      const gelukt = await metKnop(veld("nieuw-opslaan"), fout, "Opslaan…", async () => {
+        await wijzigJson("data/extra.json", "achtbanen", (lijst) => {
+          if (lijst.some((x) => x && x.id === id)) return lijst;
+          return [...lijst, nieuw];
+        }, `Achtbaan toegevoegd aan extra.json: ${naam}`);
+        if (ookRit) await wijzigJson("data/gereden.json", "gereden", (ritten) => [...ritten, { id }], `Rit toegevoegd: ${naam}`);
+      });
+      if (!gelukt) return;
+      d.close();
+      toast(`${naam} is toegevoegd. Bezoekers zien hem over een paar minuten.`, true);
+      location.href = `achtbaan.html?id=${encodeURIComponent(id)}`;
+    });
+  }
+
   function tekenMiniKaart(a) {
     const vak = $("#minikaart");
     if (!vak) return;
@@ -1039,6 +1173,9 @@
       return;
     }
     document.title = `${a.naam}${a.park ? ", " + a.park : ""} | ${SITE.naam}`;
+    if (data.details) {
+      try { Object.assign(a, ((await haalJson(data.details, false)) || {})[a.id] || {}); } catch (e) { console.warn(e); }
+    }
     tekenAchtbaan(a, data);
   }
 
