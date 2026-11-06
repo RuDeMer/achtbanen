@@ -1,4 +1,14 @@
-Zet hier je eigen foto's neer, bijvoorbeeld baron-1898.jpg.
-Verwijs ernaar in data/gereden.json met "foto": "fotos/baron-1898.jpg".
-Je eigen foto krijgt dan voorrang boven de foto van Wikimedia Commons.
-Tip: maak foto's eerst kleiner (zo'n 1600 pixels breed) zodat de site snel blijft.
+Hier staan je eigen foto's.
+
+De makkelijkste manier: open op de site een achtbaan, kies Bewerken bij je rit
+(of Zet op mijn lijst) en kies Kies een foto. Dat werkt ook vanaf je telefoon.
+De site maakt de foto eerst kleiner (maximaal 1600 pixels breed), haalt de
+gegevens uit de foto (zoals de plek waar hij gemaakt is) en zet hem hier neer.
+
+Met de hand kan het ook: zet een foto hier neer, bijvoorbeeld baron-1898.jpg,
+en verwijs ernaar in data/gereden.json met "foto": "fotos/baron-1898.jpg".
+Maak hem dan eerst zelf kleiner (zo'n 1600 pixels breed) zodat de site snel blijft.
+
+Je eigen foto gaat altijd voor op de foto van Wikimedia Commons.
+Haal je een foto weg bij een rit, dan blijft het bestand hier staan. Wil je het
+echt kwijt, verwijder het dan op GitHub.

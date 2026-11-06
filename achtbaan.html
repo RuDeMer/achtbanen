@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://commons.wikimedia.org https://upload.wikimedia.org https://tile.openstreetmap.org https://raw.githubusercontent.com; connect-src 'self' https://api.github.com https://www.wikidata.org https://*.wikipedia.org https://commons.wikimedia.org; object-src 'none'; base-uri 'self'; form-action 'self'">
   <title>Achtbaan | Rubens Achtbanen</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎢</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Instrument+Sans:ital,wght@0,400;0,600;0,700;1,400&display=swap">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" integrity="sha512-Zcn6bjR/8RZbLEpLIeOwNtzREBAJnUKESxces60Mpoj+2okopSAcSUIUOseddDm0cxnGQzxIR7vJgsLZbdLE3w==" crossorigin="anonymous" referrerpolicy="no-referrer">
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body data-pagina="achtbaan">
@@ -25,10 +26,10 @@
   </main>
 
   <footer class="voet">
-    <p>Gegevens: <a href="https://www.wikidata.org">Wikidata</a> (CC0). Tekst: Wikipedia (CC BY-SA). Foto's: <a href="https://commons.wikimedia.org">Wikimedia Commons</a>, maker en licentie staan onder de foto. Kaarten: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>.</p>
+    <p>Gegevens: <a href="https://www.wikidata.org">Wikidata</a> (CC0) en <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap-bijdragers (ODbL)</a>. Tekst: Wikipedia (CC BY-SA). Foto's: <a href="https://commons.wikimedia.org">Wikimedia Commons</a>, maker en licentie staan onder de foto. Kaarten: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>.</p>
   </footer>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js" integrity="sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLLlTSXzWQzxuSg4DiQUCpauz/EWjgk5TYQqX/kvn9pG1NpYfqg==" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
   <script src="config.js" defer></script>
   <script src="assets/site.js" defer></script>
 </body>
