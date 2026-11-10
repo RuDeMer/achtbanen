@@ -337,6 +337,7 @@ h2 { font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 800; }
   position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%);
   background: var(--inkt); color: var(--lucht); padding: .7rem 1.1rem; border-radius: 8px;
   font-weight: 700; z-index: 1000;
+  width: max-content; max-width: min(36rem, calc(100% - 2rem)); text-align: center;
 }
 .foto-leeg::after { -webkit-mask-size: 22%; mask-size: 22%; }
 
@@ -559,3 +560,10 @@ a.knop-klein { text-decoration: none; display: inline-block; }
 .blok h2 .aantal { color: var(--rail); }
 .vergelijk-lijst li a { overflow-wrap: anywhere; }
 .vergelijk-lijst .dicht { text-align: right; }
+
+/* ---------- privacy en voet ---------- */
+
+.privacy .blok p { max-width: 68ch; margin: 0 0 .8rem; }
+.privacy .stappen li { margin-bottom: .5rem; }
+.voet-links { display: flex; flex-wrap: wrap; gap: .3rem 1.25rem; }
+.voet-links:empty { display: none; }

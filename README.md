@@ -21,13 +21,16 @@ Alle achtbanen van de wereld op één site, met een teller van de achtbanen die 
 | `assets/delen.png` | Het plaatje dat WhatsApp en andere apps tonen als je een link deelt. |
 | `achtbaan.html` | De attractiepagina. Toont elke achtbaan via `achtbaan.html?id=…`. |
 | `beheer.html` | Het beheerpaneel. Staat niet in het menu; alleen voor jou. |
-| `account.html` | Inloggen met een link per mail, je profiel en uitloggen. |
+| `account.html` | Inloggen met een link per mail, je profiel, uitloggen en je account verwijderen. |
+| `privacy.html` | In gewone taal: wat er bewaard wordt, wie het kan zien en hoe je alles verwijdert. |
 | `supabase/schema.sql` | De database voor accounts en credits, met de beveiliging. Plak je in Supabase. |
 | `supabase/test_beveiliging.sql` | Test of niemand bij de gegevens van een ander kan. Draai je in Supabase. |
 | `supabase/mails/` | Nederlandse teksten voor de inlogmail en de uitnodiging. |
 | `assets/vendor/supabase.js` | De officiële Supabase-bibliotheek (versie 2.118.0, MIT-licentie). Staat in de repository, zodat de site geen andere server nodig heeft. |
 | `scripts/haal_achtbanen.py` | Haalt de achtbanen op bij Wikidata en OpenStreetMap, en zoekt foto's. |
+| `scripts/reservekopie.py` | Controleert Supabase, maakt een reservekopie en kan hem terugzetten. |
 | `.github/workflows/site.yml` | Laat GitHub de lijst ophalen en de site publiceren. |
+| `.github/workflows/reservekopie.yml` | Kijkt elke dag of Supabase werkt en maakt elke maandag een versleutelde reservekopie. |
 
 ## Accounts voor vrienden (Supabase)
 
@@ -125,6 +128,59 @@ Wat je opslaat staat meteen op de site, voor iedereen. Op de pagina van een acht
 - **Delen**: de knop onder de teller. Op een telefoon opent het deelmenu (WhatsApp, Berichten, …); op een computer wordt de link gekopieerd.
 
 Als iemand een link in WhatsApp plakt, toont WhatsApp een voorbeeld met titel, korte tekst en `assets/delen.png`. Die gegevens staan vast in de HTML (Open Graph), omdat WhatsApp geen JavaScript uitvoert. Daarom staat er bij een profiel een algemene tekst en niet het aantal credits. WhatsApp onthoudt een voorbeeld een tijdje; zie je na een wijziging nog het oude, dan komt het nieuwe vanzelf. Deze tags verwijzen naar `https://rudemer.github.io/achtbanen/`; verhuist de site, pas dan in de HTML-bestanden `og:url` en `og:image` aan.
+
+## Privacy en veiligheid
+
+- **Zo min mogelijk bewaren.** Per persoon: e-mailadres (alleen om in te loggen, bij Supabase), naam op de site, gebruikersnaam, wel of niet in de ranglijst, en de ritten. Geen wachtwoorden, geen tijdstempels in de eigen tabellen, geen tracking, geen cookies. Het e-mailadres staat nergens op de site; jij ziet het alleen in Supabase bij **Authentication**, **Users**.
+- **Privacypagina**: [`privacy.html`](privacy.html), onderaan elke pagina. Pas hem aan als je iets anders gaat doen met de gegevens.
+- **Alles verwijderen**: iedereen kan op *Mijn account* zijn eigen account verwijderen. Dan verdwijnen meteen account, e-mailadres, profiel en ritten. Jij kunt het ook doen bij **Authentication**, **Users**, drie puntjes, **Delete user**.
+- **Alleen je eigen gegevens**: dat regelt de database zelf (row level security), niet alleen de site. Draai [`supabase/test_beveiliging.sql`](supabase/test_beveiliging.sql) gerust nog eens als je iets aan de database verandert.
+- **Invoer wordt gecontroleerd**, eerst door de site en daarna nog eens door de database: naam hooguit 40 tekens, gebruikersnaam 3 tot 24 tekens (kleine letters, cijfers, streepjes), notitie hooguit 200 tekens, cijfer van 1 tot 10, een echte datum of een jaar tussen 1900 en 2100, en een geldige achtbaan-code. Hooguit 5000 ritten per persoon.
+- **Tekst van gebruikers komt nooit als HTML op de pagina.** Een naam of notitie met `<script>` erin staat er gewoon als tekst. Daarnaast laat de beveiliging van de pagina's (Content Security Policy) alleen scripts van de site zelf toe.
+- **Sleutels**: in `config.js` staat alleen de publieke sleutel. Is de geheime sleutel ooit ergens terechtgekomen waar hij niet hoort: maak in Supabase bij **Project Settings**, **API Keys** een nieuwe aan en verwijder de oude.
+
+## Supabase op pauze
+
+**Wat het betekent.** Supabase zet een gratis project op pauze als er een week lang weinig gebeurt. Je gegevens blijven bewaard, maar de database doet het dan niet: niemand kan inloggen of afvinken, en de ranglijst, profielen en vergelijkingen laden niet. De startpagina toont dan je credits uit de reservekopie `data/gereden.json`, met een melding.
+
+**Hoe je het merkt.**
+- Supabase mailt je ongeveer een week van tevoren, en nog een keer als het project op pauze staat.
+- De workflow **Supabase controleren en reservekopie** kijkt elke dag of de database bereikbaar is. Lukt dat niet, dan mislukt de run en krijg je een mail van GitHub. Zorg dat die mail aanstaat: GitHub, je profielfoto, **Settings**, **Notifications**, bij **Actions** kies **Email** en **Only notify for failed workflows**.
+- Op [supabase.com/dashboard](https://supabase.com/dashboard) staat bij het project *Paused*.
+
+**Weer aanzetten.** Open het project op [supabase.com/dashboard](https://supabase.com/dashboard) en kies **Resume project**. Na een paar minuten werkt alles weer, met alle gegevens. Volgens Supabase kan dat tot een jaar na het pauzeren. Start daarna in GitHub bij **Actions** de workflow nog eens met **Run workflow** om te zien dat hij weer groen is.
+
+**Voorkomen.** De dagelijkse controle doet elke dag een paar kleine verzoeken. Volgens Supabase is "een paar verzoeken per dag" meestal genoeg om pauzeren te voorkomen, maar een garantie is het niet. Alleen een betaald abonnement (Pro) gaat nooit op pauze. Let op: GitHub zet geplande workflows in een openbare repository uit als er 60 dagen niets in de repository verandert. Je krijgt daar een mail van; zet hem dan weer aan bij **Actions**, de workflow, **Enable workflow**.
+
+## Reservekopie (niet openbaar)
+
+Supabase maakt bij het gratis abonnement geen reservekopie die je kunt downloaden. Daarom doet de workflow **Supabase controleren en reservekopie** dat elke maandag: alle profielen en ritten, zonder e-mailadressen (die zijn met de publieke sleutel niet te lezen, en dat is goed zo). De kopie is versleuteld met een wachtwoord dat alleen jij kent en blijft 90 dagen bij de run staan. Waarom versleuteld: je repository is openbaar, en bestanden bij een run kan iedereen met een GitHub-account downloaden. Zonder het wachtwoord kan niemand de kopie openen.
+
+### Aanzetten (één keer)
+
+1. Bedenk een lang wachtwoord (bijvoorbeeld vier losse woorden) en bewaar het in je wachtwoordmanager. Kwijt is kwijt: zonder wachtwoord open je de kopie niet.
+2. Ga op GitHub naar de repository, **Settings**, **Secrets and variables**, **Actions**, **New repository secret**. **Name**: `RESERVEKOPIE_WACHTWOORD`, **Secret**: je wachtwoord. Kies **Add secret**.
+3. Ga naar **Actions**, kies **Supabase controleren en reservekopie** en **Run workflow**. Na een minuut staat er onderaan de run bij **Artifacts** een `reservekopie-…`.
+
+Zonder dat geheim maakt de workflow wel de controle, maar bewaart hij geen kopie, zodat er nooit iets onversleuteld online komt. Je eigen ritten zet hij ook in `data/gereden.json` (die zijn toch al openbaar), zodat de reservekopie op de startpagina bij blijft.
+
+### Een kopie openen
+
+Download bij een run het artifact. Je krijgt een zip met een `.7z`-bestand. Open dat met [7-Zip](https://www.7-zip.org) (Windows) of [Keka](https://www.keka.io) (Mac) en je wachtwoord. Daarin staat `reservekopie-JJJJ-MM-DD.json`.
+
+### Met de hand, extra veilig
+
+Wil je ook een kopie op je eigen computer (bijvoorbeeld elke maand): kies in Supabase **SQL Editor**, draai `select * from public.ritten;` en kies bij het resultaat **Export**, **Download CSV**. Doe hetzelfde met `select * from public.profielen;`. Wil je ook de e-mailadressen bewaren, gebruik dan `select id, email from auth.users;`. Bewaar deze bestanden op je eigen computer, nooit in de repository.
+
+### Terugzetten
+
+Ritten of profielen kwijt, maar de accounts bestaan nog? Pak de kopie uit en maak er SQL van:
+
+```bash
+python3 scripts/reservekopie.py terugzetten reservekopie-2026-11-10.json > terugzetten.sql
+```
+
+Plak de inhoud van `terugzetten.sql` in de **SQL Editor** en kies **Run**. Wat er nog staat, blijft staan; er komt niets dubbel. Is het hele project weg, maak dan een nieuw project (stap 1 tot 4), nodig iedereen opnieuw uit en laat ze hun gebruikersnaam opnieuw kiezen. Daarna kunnen de ritten per gebruikersnaam worden teruggezet; dat is maatwerk.
 
 ## Beheer: de lijst en je foto's (alleen jij)
 

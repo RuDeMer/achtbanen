@@ -2286,6 +2286,7 @@
     wis(k) { try { sessionStorage.removeItem(k); } catch (e) { /* geen opslag */ } },
   };
   const LOGIN_ADRES = "achtbanen-login-adres"; // alleen in dit tabblad, voor de code uit de mail
+  const MELDING = "achtbanen-melding"; // een bericht voor de volgende pagina
   const profielLink = (p) => new URL(`profiel.html?wie=${encodeURIComponent(p.gebruikersnaam)}`, location.href).href;
   const naarGebruikersnaam = (s) => slug(s).slice(0, 24).replace(/-+$/, "");
 
@@ -2447,7 +2448,15 @@
       <div id="account-extra"></div>
       <h2 class="beheer-kop">Uitloggen op al je apparaten</h2>
       <p class="klein">Telefoon kwijt, of ingelogd op een computer van iemand anders? Hiermee log je overal uit. Je gegevens blijven bewaard.</p>
-      <div class="knoppen"><button class="knop knop-licht" type="button" id="overal-uit">Overal uitloggen</button></div>`;
+      <div class="knoppen"><button class="knop knop-licht" type="button" id="overal-uit">Overal uitloggen</button></div>
+      <h2 class="beheer-kop">Account verwijderen</h2>
+      <p>Hiermee verdwijnen meteen je account, je e-mailadres, je profiel en al je ritten. Dat kan niet ongedaan worden. <a href="privacy.html">Wat er bewaard wordt</a></p>
+      ${ik.gebruikersnaam === SITE.eigenaar ? '<p class="fout">Jij bent de eigenaar. Verwijder je je account, dan toont de startpagina weer de reservekopie uit gereden.json.</p>' : ""}
+      <form class="formulier" id="weg-form" novalidate>
+        <label><span>Typ je gebruikersnaam (<strong>${esc(ik.gebruikersnaam)}</strong>) om te bevestigen</span> <input type="text" id="weg-naam" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="24"></label>
+        <p class="fout" id="weg-fout" role="alert"></p>
+        <div class="knoppen"><button class="knop knop-licht knop-gevaar" type="submit" id="weg-knop">Mijn account verwijderen</button></div>
+      </form>`;
     koppelProfielFormulier($("#profiel-form"), false, async (p) => {
       ik = await sbVraag(sb.from("profielen").update(p).eq("id", ik.id).select(PROFIEL_VELDEN).single(), "Opslaan");
       tekenAccount(vak);
@@ -2457,6 +2466,16 @@
     $("#uitloggen").addEventListener("click", () => logUit("local"));
     $("#overal-uit").addEventListener("click", () => {
       if (confirm("Op al je apparaten uitloggen? Daarna log je overal opnieuw in met een link per mail.")) logUit("global");
+    });
+    $("#weg-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fout = $("#weg-fout");
+      if ($("#weg-naam").value.trim().toLowerCase() !== ik.gebruikersnaam) { fout.textContent = "Typ precies je gebruikersnaam om te bevestigen."; return; }
+      if (!confirm("Weet je het zeker? Je account en al je ritten worden nu verwijderd.")) return;
+      const gelukt = await metKnop($("#weg-knop"), fout, "Verwijderen…", () => sbVraag(sb.rpc("verwijder_mijn_account"), "Verwijderen lukte niet"));
+      if (!gelukt) return;
+      sessieOpslag.zet(MELDING, "Je account en al je gegevens zijn verwijderd.");
+      await logUit("local");
     });
   }
 
@@ -2499,8 +2518,12 @@
 
   async function logUit(waar) {
     try { await sb.auth.signOut({ scope: waar }); } catch (e) { console.warn(e); }
-    // Lukt het afmelden bij Supabase niet (geen internet), dan in elk geval op dit apparaat
-    try { localStorage.removeItem("achtbanen-sessie"); } catch (e) { /* geen opslag */ }
+    // Lukt het afmelden bij Supabase niet (geen internet), dan in elk geval op dit apparaat.
+    // Ook je afvinkkeuze en het mailadres van het inloggen gaan weg.
+    try {
+      for (const k of Object.keys(localStorage)) if (k === "achtbanen-sessie" || k.startsWith("achtbanen-sessie-") || k.startsWith("achtbanen-afvink-")) localStorage.removeItem(k);
+    } catch (e) { /* geen opslag */ }
+    sessieOpslag.wis(LOGIN_ADRES);
     location.replace("./");
   }
 
@@ -2516,8 +2539,9 @@
     }
     if (nav && beheer && PAGINA !== "beheer") nav.insertAdjacentHTML("beforeend", '<a href="beheer.html" class="nav-beheer">Beheer</a>');
     const voet = $(".voet");
-    if (voet && sbAan && PAGINA !== "account") {
-      voet.insertAdjacentHTML("beforeend", `<p><a href="account.html">${ik ? "Mijn account" : "Inloggen"}</a></p>`);
+    if (voet && sbAan) {
+      voet.insertAdjacentHTML("beforeend", `<p class="voet-links">${PAGINA === "account" ? "" : `<a href="account.html">${ik ? "Mijn account" : "Inloggen"}</a>`}
+        ${PAGINA === "privacy" ? "" : '<a href="privacy.html">Privacy</a>'}</p>`);
     }
   }
 
@@ -2526,6 +2550,9 @@
   if (["home", "achtbaan", "profiel", "vergelijk"].includes(PAGINA)) laadAlles().catch(() => { /* de pagina toont de fout */ });
   (async () => {
     if (!(await startAccount())) return;
+    if (sessie) sessieOpslag.wis(LOGIN_ADRES);
+    const melding = sessieOpslag.lees(MELDING);
+    if (melding) { sessieOpslag.wis(MELDING); setTimeout(() => toast(melding, true), 300); }
     if (sbAan && ["home", "achtbaan", "profiel", "vergelijk"].includes(PAGINA)) laadIedereen().catch(() => { /* de pagina toont de fout */ });
     tekenMenu();
     if (PAGINA === "home") { document.title = SITE.naam; startPagina(); }

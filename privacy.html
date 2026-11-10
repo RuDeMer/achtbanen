@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.supabase.co https://api.github.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta name="referrer" content="no-referrer">
+  <title>Privacy | Rubens Achtbanen</title>
+  <meta name="description" content="Wat Rubens Achtbanen bewaart, wie het kan zien en hoe je alles verwijdert.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Rubens Achtbanen">
+  <meta property="og:locale" content="nl_NL">
+  <meta property="og:title" content="Privacy bij Rubens Achtbanen">
+  <meta property="og:description" content="Wat de site bewaart, wie het kan zien en hoe je alles verwijdert.">
+  <meta property="og:image" content="https://rudemer.github.io/achtbanen/assets/delen.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Een rode achtbaan met een treintje, en de woorden Rubens Achtbanen">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎢</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Instrument+Sans:ital,wght@0,400;0,600;0,700;1,400&display=swap">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-pagina="privacy">
+  <header class="kop">
+    <a class="logo" href="./" data-sitenaam>Rubens Achtbanen</a>
+    <nav aria-label="Hoofdmenu">
+      <a href="./#kaart-sectie">Kaart</a>
+      <a href="./#overzicht">Alle achtbanen</a>
+    </nav>
+  </header>
+
+  <main id="inhoud" class="beheer privacy">
+    <header class="titel">
+      <div>
+        <h1>Privacy</h1>
+        <p class="plek">Kort gezegd: de site bewaart alleen wat nodig is om je credits te tonen. Je e-mailadres is alleen om in te loggen en staat nergens op de site.</p>
+      </div>
+    </header>
+
+    <section class="blok">
+      <h2>Wat wordt er bewaard?</h2>
+      <ul class="stappen">
+        <li><strong>Je e-mailadres.</strong> Alleen om je een inloglink te sturen. Niemand ziet het op de site. Ruben kan het zien in het beheer van de database, omdat hij je heeft uitgenodigd.</li>
+        <li><strong>Je naam op de site en je gebruikersnaam.</strong> Die kies je zelf. Het hoeft niet je echte naam te zijn.</li>
+        <li><strong>Of je in de ranglijst wilt staan.</strong></li>
+        <li><strong>Je ritten:</strong> welke achtbaan, en als je dat invult de datum (of alleen het jaar), een cijfer en een notitie.</li>
+      </ul>
+      <p>Supabase, de dienst waar de gegevens staan, houdt daarnaast bij wanneer je voor het laatst bent ingelogd. Ook bewaart Supabase een korte tijd technische logboeken, zoals het IP-adres bij het inloggen. Dat is om misbruik tegen te gaan.</p>
+      <p>Wat er <strong>niet</strong> wordt bewaard: een wachtwoord (er is er geen), je telefoonnummer of je locatie. Er is geen reclame en er wordt niet bijgehouden wat je op de site doet. De site gebruikt geen cookies. Alleen je eigen browser onthoudt dat je bent ingelogd, tot je uitlogt.</p>
+    </section>
+
+    <section class="blok">
+      <h2>Wie kan het zien?</h2>
+      <ul class="stappen">
+        <li><strong>Je naam, je gebruikersnaam en je ritten zijn openbaar</strong>, met datum, cijfer en notitie. Iedereen die de site bezoekt, kan ze zien. Zet dus niets in een notitie wat niet iedereen mag lezen.</li>
+        <li>Zet je bij <a href="account.html">Mijn account</a> het vinkje voor de ranglijst uit, dan sta je niet in de ranglijst, niet bij "Ook gereden door" en niet in het filter. Je profiel is dan alleen te vinden met je eigen link. Je gegevens zijn dan wel nog steeds openbaar voor wie weet hoe hij ze moet opvragen.</li>
+        <li><strong>Alleen jij</strong> kunt je eigen gegevens toevoegen, wijzigen of verwijderen. Dat controleert de database zelf, niet alleen de site.</li>
+        <li><strong>Je e-mailadres is niet openbaar.</strong></li>
+      </ul>
+    </section>
+
+    <section class="blok">
+      <h2>Waar staat het, en hoe lang?</h2>
+      <p>De gegevens staan bij <a href="https://supabase.com">Supabase</a>, in een datacentrum in Europa. De site zelf staat op GitHub Pages. Ze blijven bewaard zolang je account bestaat.</p>
+      <p>Ruben maakt elke week een reservekopie van de profielen en ritten, zonder e-mailadressen. Die is versleuteld met een wachtwoord en verdwijnt na 90 dagen vanzelf.</p>
+      <p>De site haalt ook dingen op bij andere diensten: lettertypes bij Google Fonts, kaarten bij OpenStreetMap, en foto's en teksten bij Wikimedia Commons, Wikidata en Wikipedia. Die diensten zien dan je IP-adres, zoals bij elke website. Ze krijgen geen gegevens van je account.</p>
+    </section>
+
+    <section class="blok">
+      <h2>Alles verwijderen</h2>
+      <ol class="stappen">
+        <li>Log in en ga naar <a href="account.html">Mijn account</a>.</li>
+        <li>Kies onderaan <strong>Mijn account verwijderen</strong> en typ je gebruikersnaam om te bevestigen.</li>
+      </ol>
+      <p>Dan verdwijnen meteen je account, je e-mailadres, je profiel en al je ritten. Dat kan niet ongedaan worden. In de reservekopieën van de afgelopen weken staan je profiel en ritten nog, tot die na 90 dagen vanzelf verdwijnen.</p>
+      <p>Wil je alleen een paar ritten weg? Open de achtbaan en kies <strong>Verwijderen</strong> bij je rit. Lukt inloggen niet meer, of wil je dat Ruben het doet? Vraag het hem: hij kan je account ook verwijderen.</p>
+    </section>
+
+    <section class="blok">
+      <h2>Vragen?</h2>
+      <p>Vraag het Ruben. Hij beheert de site en is verantwoordelijk voor je gegevens.</p>
+    </section>
+  </main>
+
+  <footer class="voet">
+    <p>Gegevens: <a href="https://www.wikidata.org">Wikidata</a> (CC0) en <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap-bijdragers (ODbL)</a>.</p>
+  </footer>
+
+  <script src="assets/vendor/supabase.js" defer></script>
+  <script src="config.js" defer></script>
+  <script src="assets/site.js" defer></script>
+</body>
+</html>
