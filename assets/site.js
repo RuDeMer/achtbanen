@@ -1790,7 +1790,7 @@
   }
 
   /* Bron van een gegeven, klein en met een link naar die bron */
-  const BRON_NAMEN = { wd: "Wikidata", "wp:en": "Engelse Wikipedia", "wp:nl": "Nederlandse Wikipedia", "wp:de": "Duitse Wikipedia", osm: "OpenStreetMap", eigen: "Eigen aanvulling", plek: "afgeleid uit de plek op de kaart" };
+  const BRON_NAMEN = { wd: "Wikidata", "wp:en": "Engelse Wikipedia", "wp:nl": "Nederlandse Wikipedia", "wp:de": "Duitse Wikipedia", osm: "OpenStreetMap", eigen: "Eigen aanvulling", plek: "afgeleid uit de plek op de kaart", park: "afgeleid uit het park" };
   const wikiUrl = (taal, titel) => `https://${taal}.wikipedia.org/wiki/${encodeURIComponent(String(titel).replace(/ /g, "_"))}`;
   const osmPad = (a) => (/^(node|way|relation)\/\d+$/.test(a.osm || "") ? a.osm
     : /^osm-(node|way|relation)-\d+$/.test(a.id) ? a.id.slice(4).replace("-", "/") : "");

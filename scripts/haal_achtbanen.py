@@ -111,8 +111,8 @@ SELECT ?item
   (GROUP_CONCAT(STR(?type); separator="|") AS ?types)
   (GROUP_CONCAT(STR(?deel); separator="|") AS ?delen)
   (GROUP_CONCAT(STR(?plek); separator="|") AS ?plekken)
-  (SAMPLE(?land) AS ?land1)
-  (SAMPLE(?coord) AS ?coord1)
+  (GROUP_CONCAT(DISTINCT STR(?land); separator="|") AS ?land1)
+  (GROUP_CONCAT(DISTINCT STR(?coord); separator="|") AS ?coord1)
   (SAMPLE(?foto) AS ?foto1)
   (SAMPLE(?rcdb) AS ?rcdb1)
 WHERE {{
@@ -518,7 +518,11 @@ def maak_wikidata_lijst(basis, cijfers, extra, plekken, parken, naam, alle_namen
         schone_naam, bijna = norm.naam(naam[q], park_naam)
         if bijna and not status:
             status = "gepland"
-        lat, lon = coordinaten(waarde(r, "coord1"))
+        # Een verhuisde baan heeft soms meer landen en plekken: allemaal bewaren, en straks
+        # kiezen wat bij het park past (plek_bij_park). Tot die tijd: een vaste keus.
+        punten = sorted({p for p in (coordinaten(w) for w in (waarde(r, "coord1") or "").split("|")) if p[0] is not None})
+        lat, lon = punten[0] if punten else (None, None)
+        landen = sorted({l for l in (norm.land(naam.get(x)) for x in lijst_qids(waarde(r, "land1"))) if l})
         rcdb = waarde(r, "rcdb1")
         fabrikant = next((naam[f] for f in lijst_qids(waarde(c, "fabrikanten")) if f in naam), None)
 
@@ -527,7 +531,9 @@ def maak_wikidata_lijst(basis, cijfers, extra, plekken, parken, naam, alle_namen
             "naam": schone_naam,
             "park": park_naam,
             "parkId": park_id,
-            "land": norm.land(naam.get(qid(waarde(r, "land1")))),
+            "land": landen[0] if landen else None,
+            "_landen": landen if len(landen) > 1 else None,
+            "_punten": punten if len(punten) > 1 else None,
             "foto": bestandsnaam(waarde(r, "foto1")),
             "lat": lat,
             "lon": lon,
@@ -1459,6 +1465,61 @@ ALGEMENE_NAAM = {"achtbaan", "rollercoaster", "coaster", "kiddiecoaster", "famil
                  "juniorcoaster", "familieachtbaan", "achterbahn", "kinderachterbahn", "minicoaster"}
 
 
+def plek_bij_park(alle, tel):
+    """Land en plek die bij het park passen. Een baan die verhuisd is, heeft in Wikidata vaak
+    het oude én het nieuwe land en de oude én de nieuwe plek. Alleen als de meeste andere banen
+    van hetzelfde park het eens zijn (minstens twee en meer dan de helft: zelfde land, binnen 15 km):
+    - de plek van de baan die het dichtst bij die banen ligt (uit de eigen plekken in Wikidata);
+    - het land van het park, als dat een van de eigen landen is, of als de baan zelf in het
+      park ligt (dan klopt het land in Wikidata niet).
+    Ligt de baan ver weg en noemt hij een ander land, dan kan ook het park fout zijn: dan
+    verandert er niets en telt hij als twijfel in het rapport."""
+    per_park = defaultdict(list)
+    for a in alle:
+        if a.get("parkId"):
+            per_park[a["parkId"]].append(a)
+    for banen in per_park.values():
+        if len(banen) < 3:
+            continue
+        for a in banen:
+            anderen = [b for b in banen if b is not a and not b.get("_punten") and not b.get("_landen")]
+            # Het park: waar de meeste andere banen liggen (minstens twee, en meer dan de helft)
+            plekken = [(b["lat"], b["lon"]) for b in anderen if b.get("lat") is not None]
+            midden = None
+            if len(plekken) >= 2:
+                mediaan = lambda ps: (sorted(p[0] for p in ps)[len(ps) // 2], sorted(p[1] for p in ps)[len(ps) // 2])
+                m = mediaan(plekken)
+                dichtbij = [p for p in plekken if afstand(*p, *m) <= 15_000]
+                if len(dichtbij) >= 2 and 2 * len(dichtbij) > len(plekken):
+                    midden = mediaan(dichtbij)
+            if midden:
+                eigen = a.get("_punten") or ([(a["lat"], a["lon"])] if a.get("lat") is not None else [])
+                beste = min(eigen, key=lambda p: afstand(*p, *midden), default=None)
+                nu_ver = a.get("lat") is None or afstand(a["lat"], a["lon"], *midden) > 15_000
+                if beste and nu_ver and afstand(*beste, *midden) <= 15_000:
+                    a["lat"], a["lon"] = beste
+                    tel["plek_bij_park"] += 1
+            ver = midden is not None and a.get("lat") is not None and afstand(a["lat"], a["lon"], *midden) > 15_000
+            telling = Counter(b["land"] for b in anderen if b.get("land"))
+            park_land, n = telling.most_common(1)[0] if telling else (None, 0)
+            if n < 2 or 2 * n <= sum(telling.values()):
+                tel["plek_twijfel"] += ver
+                continue
+            if a.get("land") == park_land:
+                tel["plek_twijfel"] += ver
+                continue
+            in_park = midden is not None and a.get("lat") is not None and afstand(a["lat"], a["lon"], *midden) <= 15_000
+            if park_land in (a.get("_landen") or []) or in_park:
+                a["land"] = park_land
+                a.setdefault("bron", {})["land"] = "park"
+                tel["land_bij_park"] += 1
+            elif a.get("land"):
+                tel["plek_twijfel"] += 1
+    for a in alle:
+        a.pop("_punten", None)
+        a.pop("_landen", None)
+
+
 def land_uit_plek(alle, tel):
     """Banen zonder land (vooral uit OpenStreetMap): het land van een andere baan in hetzelfde
     park, of anders het land van de banen in de buurt: minstens twee bekende banen binnen 40 km,
@@ -2141,6 +2202,7 @@ def bouw(vorige, tel):
     park_aliassen = voeg_parken_samen(alle, tel)
     dubbel = voeg_dubbele_banen_samen(alle, set(splitsen), tel)
     naar_doel.update(dubbel)
+    plek_bij_park(alle, tel)
     land_uit_plek(alle, tel)
 
     # VR-versies horen bij de echte baan: je rit op een VR-versie telt voor die baan
@@ -2326,6 +2388,9 @@ def schrijf_rapport(achtbanen, tel):
     if tel["foto_zoeken_niet_af"]:
         meldingen.append(f"Zoeken naar foto's op Commons stopte na de tijdslimiet; {tel['foto_zoeken_niet_af']} banen "
                          "zonder foto komen de volgende keer aan de beurt.")
+    if tel["plek_twijfel"]:
+        meldingen.append(f"{tel['plek_twijfel']} banen liggen ver van de andere banen in hun park, of noemen een ander land. "
+                         "Misschien klopt het park niet, of de plek in Wikidata (vaak bij verhuisde banen).")
     if tel["foto_niet_gecontroleerd"]:
         meldingen.append(f"Bij {tel['foto_niet_gecontroleerd']} banen lukte het zoeken of controleren van foto's niet; "
                          "de foto van de vorige keer is gebleven.")

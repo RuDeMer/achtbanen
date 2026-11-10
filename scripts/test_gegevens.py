@@ -261,10 +261,30 @@ class Rapport(unittest.TestCase):
                 rapport.meld_mislukt("Wikidata gaf geen antwoord.")
             finally:
                 del os.environ["GITHUB_STEP_SUMMARY"]
-            self.assertEqual(json.load(open(pad, encoding="utf-8"))["totaal"], 1)
-            tekst = open(samen, encoding="utf-8").read()
+            with open(pad, encoding="utf-8") as f:
+                self.assertEqual(json.load(f)["totaal"], 1)
+            with open(samen, encoding="utf-8") as f:
+                tekst = f.read()
             self.assertIn("## Kwaliteit van de gegevens", tekst)
             self.assertIn("**Let op:** Wikidata gaf geen antwoord.", tekst)
+
+
+class PlekBijPark(unittest.TestCase):
+    def test_verhuisde_baan(self):
+        from collections import defaultdict
+        park = [{"id": f"Q{i}", "naam": f"B{i}", "parkId": "Qp", "land": "Frankrijk", "lat": 44.18 + i / 1000, "lon": 0.57} for i in range(3)]
+        verhuisd = {"id": "Qv", "naam": "Boomerang", "parkId": "Qp", "land": "België", "_landen": ["België", "Frankrijk", "Nederland"],
+                    "lat": 50.7, "lon": 4.59, "_punten": [(44.185, 0.574), (50.7, 4.59), (52.44, 5.77)]}
+        fout_land = {"id": "Qf", "naam": "Draak", "parkId": "Qp", "land": "Japan", "lat": 44.181, "lon": 0.571}
+        ander_park = {"id": "Qa", "naam": "Goud", "parkId": "Qp", "land": "Maleisië", "lat": 3.07, "lon": 101.6}
+        tel = defaultdict(int)
+        h.plek_bij_park(park + [verhuisd, fout_land, ander_park], tel)
+        self.assertEqual((verhuisd["land"], verhuisd["lat"], verhuisd["lon"]), ("Frankrijk", 44.185, 0.574))
+        self.assertEqual(fout_land["land"], "Frankrijk")  # ligt in het park: het land in Wikidata klopte niet
+        self.assertEqual((ander_park["land"], ander_park["lat"]), ("Maleisië", 3.07))  # misschien is het park fout
+        self.assertEqual(tel["plek_twijfel"], 1)
+        self.assertNotIn("_punten", verhuisd)
+        self.assertEqual(verhuisd["bron"]["land"], "park")
 
 
 if __name__ == "__main__":

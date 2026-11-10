@@ -31,6 +31,7 @@ BRON_NAMEN = {
     "eigen": "Eigen aanvullingen", "wd": "Wikidata", "wp:en": "Engelstalige Wikipedia",
     "wp:nl": "Nederlandstalige Wikipedia", "wp:de": "Duitstalige Wikipedia", "osm": "OpenStreetMap",
     "plek": "Afgeleid uit de plek (land)",
+    "park": "Afgeleid uit het park (land)",
 }
 FOTO_BRONNEN = [
     ("eigen", "eigen foto"), ("p18", "Wikidata (P18)"), ("categorie", "Commons-categorie"),
