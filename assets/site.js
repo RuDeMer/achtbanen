@@ -368,12 +368,13 @@
   let geladen = null;
   function laadAlles() {
     geladen = geladen || (async () => {
-      const [basis, extra, mijn, splitsBestand, verborgenBestand] = await Promise.all([
+      const [basis, extra, mijn, splitsBestand, verborgenBestand, fotoBestand] = await Promise.all([
         haalJson("data/achtbanen.json", true),
         laadEigen("data/extra.json"),
         laadEigen("data/gereden.json"),
         laadEigen("data/splitsen.json"),
         laadEigen("data/verborgen.json"),
+        laadEigen("data/fotos.json"),
       ]);
       // Verwijzingen: oude ids (bijvoorbeeld een OSM-baan die nu in Wikidata staat, of een
       // regel uit extra.json die nu in de bronnen staat) wijzen naar de achtbaan van nu
@@ -412,8 +413,12 @@
         lijst, perId, aliassen, sporenVan, verborgen, verborgenBanen, echteIds: new Set(lijst.map((a) => a.id)),
         voorstellen: basis.splitsvoorstellen || {},
         bijgewerkt: basis.bijgewerkt, details: basis.details, extra: (extra && extra.achtbanen) || [],
+        // Je credits uit gereden.json: zonder Supabase de echte lijst, met Supabase de reservekopie
+        jsonRitten: ((mijn && mijn.gereden) || []).filter((r) => r && r.id),
+        persoon: null,
       };
-      zetRitten(data, (mijn && mijn.gereden) || []);
+      zetFotos(data, (fotoBestand && fotoBestand.fotos) || []);
+      zetRitten(data, data.jsonRitten);
       if (apiWaarschuwing) setTimeout(() => toast(apiWaarschuwing, true), 400);
       return data;
     })();
@@ -458,8 +463,180 @@
 
   async function bewaarRitten(data, wijzig, bericht) {
     const nieuw = await wijzigJson("data/gereden.json", "gereden", wijzig, bericht);
+    data.jsonRitten = nieuw.gereden;
+    if (data.persoon) data.persoon.ritten = nieuw.gereden;
     zetRitten(data, nieuw.gereden);
   }
+
+  // Je eigen foto's per achtbaan (data/fotos.json, alleen via beheer). Een foto die nog
+  // bij een oude rit in gereden.json staat, telt ook.
+  function zetFotos(data, fotos) {
+    data.fotos = fotos.filter((f) => f && f.id && eigenPad(f.foto));
+    for (const a of data.lijst) delete a.eigenFoto;
+    for (const r of data.jsonRitten) if (r.foto) for (const a of banenVanRit(data, r.id)) a.eigenFoto = r.foto;
+    for (const f of data.fotos) {
+      const a = data.perId.get(f.id) || data.verborgenBanen.get(f.id);
+      if (a) a.eigenFoto = f.foto;
+    }
+  }
+
+  /* ---------- Ritten in Supabase ----------
+     In de database heet een rit { id, achtbaan, datum, cijfer, notitie }. Op de site
+     gebruiken we dezelfde vorm als in gereden.json: { id: <achtbaan>, datum, cijfer, notitie },
+     met het rijnummer uit de database er onzichtbaar bij. */
+  const ACHTBAAN_ID = /^(Q[1-9][0-9]*|osm-(node|way|relation)-[1-9][0-9]*|x-[a-z0-9]+(-[a-z0-9]+)*)(-[1-9][0-9]?)?$/;
+  function naarRit(r) {
+    const rit = { id: r.achtbaan };
+    if (r.datum) rit.datum = r.datum;
+    if (r.cijfer != null) rit.cijfer = Number(r.cijfer);
+    if (r.notitie) rit.notitie = r.notitie;
+    Object.defineProperty(rit, "_rij", { value: r.id, enumerable: false });
+    return rit;
+  }
+  // Zelfde regels als in de database: leeg, 2006, 2006-07 of 2006-07-14 (een echte dag)
+  function geldigeDatum(d) {
+    if (!d) return true;
+    const m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(String(d));
+    if (!m || +m[1] < 1900 || +m[1] > 2100) return false;
+    if (!m[2]) return true;
+    if (+m[2] < 1 || +m[2] > 12) return false;
+    return !m[3] || new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDate() === +m[3];
+  }
+  function naarRij(rit) {
+    if (!ACHTBAAN_ID.test(rit.id || "") || rit.id.length > 100) throw new Error(`Onbekende achtbaan-code: ${rit.id}`);
+    if (!geldigeDatum(rit.datum)) throw new Error(`Deze datum klopt niet: ${rit.datum}`);
+    if (rit.cijfer != null && !(Number(rit.cijfer) >= 1 && Number(rit.cijfer) <= 10)) throw new Error("Een cijfer moet tussen 1 en 10 liggen.");
+    const notitie = netteTekst(rit.notitie).slice(0, 200);
+    return { achtbaan: rit.id, datum: rit.datum || null, cijfer: rit.cijfer ?? null, notitie: notitie || null };
+  }
+
+  // Alle ritten van één persoon (Supabase geeft er hooguit 1000 per keer)
+  async function haalRitten(gebruiker) {
+    const alle = [];
+    for (let van = 0; ; van += 1000) {
+      const rijen = await sbVraag(metTijd(sb.from("ritten").select("id,achtbaan,datum,cijfer,notitie")
+        .eq("gebruiker", gebruiker).order("id").range(van, van + 999)), "Credits ophalen");
+      alle.push(...rijen);
+      if (rijen.length < 1000) break;
+    }
+    return alle.map(naarRit);
+  }
+
+  // Wiens credits toont deze pagina, en mag je ze hier aanpassen?
+  //   { profiel, ritten, bron: "supabase" | "json", bewerkbaar, nogOverzetten }
+  async function laadPersoon(data, profiel) {
+    const ritten = await haalRitten(profiel.id);
+    if (profiel.gebruikersnaam === SITE.eigenaar && !ritten.length && data.jsonRitten.length) {
+      // Je credits staan nog alleen in gereden.json: die tonen tot je ze hebt overgezet
+      return { profiel, ritten: data.jsonRitten, bron: "json", bewerkbaar: false, nogOverzetten: true };
+    }
+    return { profiel, ritten, bron: "supabase", bewerkbaar: !!ik && ik.id === profiel.id };
+  }
+  async function laadEigenaar(data) {
+    if (!sbAan) return { profiel: null, ritten: data.jsonRitten, bron: "json", bewerkbaar: beheer };
+    try {
+      const p = await haalProfiel({ gebruikersnaam: SITE.eigenaar });
+      if (p) return await laadPersoon(data, p);
+      return { profiel: null, ritten: data.jsonRitten, bron: "json", bewerkbaar: false, nogOverzetten: true };
+    } catch (e) {
+      console.warn(e);
+      return { profiel: null, ritten: data.jsonRitten, bron: "json", bewerkbaar: false,
+        storing: "De accounts zijn even niet bereikbaar. Je ziet nu de reservekopie van de credits." };
+    }
+  }
+  function zetPersoon(data, persoon) {
+    data.persoon = persoon;
+    zetRitten(data, persoon.ritten);
+    if (persoon.storing) setTimeout(() => toast(persoon.storing, true), 600);
+  }
+  const magRitten = (data) => !!(data.persoon && data.persoon.bewerkbaar);
+  const inSupabase = (data) => !!(data.persoon && data.persoon.bron === "supabase");
+
+  async function herlaadRitten(data) {
+    const p = data.persoon;
+    if (inSupabase(data)) p.ritten = await haalRitten(p.profiel.id);
+    zetRitten(data, p.ritten);
+  }
+
+  // Een rit op de hele baan bij een gesplitste baan: voor welke sporen telt hij?
+  function sporenVanRit(data, a, rit) {
+    if (!a.deelVan || rit.id === a.id) return null;
+    const sporen = banenVanRit(data, rit.id);
+    return sporen.length >= 2 ? sporen : null;
+  }
+
+  /* De ritbron: zonder Supabase gaat alles naar gereden.json op GitHub (met je token),
+     met Supabase naar je eigen account. Dezelfde knoppen, hetzelfde venster. */
+  const ritBron = {
+    // Nieuwe ritten. "alleNieuw" laat ritten weg voor banen die al op je lijst staan.
+    async voegToe(data, ritten, bericht, alleNieuw) {
+      if (!inSupabase(data)) {
+        return bewaarRitten(data, (lijst) => {
+          if (!alleNieuw) return [...lijst, ...ritten];
+          const al = new Set(lijst.map((r) => r && data.perId.get(r.id)).filter(Boolean));
+          return [...lijst, ...ritten.filter((r) => !al.has(data.perId.get(r.id)))];
+        }, bericht);
+      }
+      let nieuw = ritten;
+      if (alleNieuw) {
+        await herlaadRitten(data); // misschien heb je intussen op een ander apparaat iets afgevinkt
+        const al = new Set(data.persoon.ritten.map((r) => data.perId.get(r.id)).filter(Boolean));
+        nieuw = ritten.filter((r) => !al.has(data.perId.get(r.id)));
+      }
+      if (nieuw.length) await sbVraag(sb.from("ritten").insert(nieuw.map(naarRij)), "Opslaan lukte niet");
+      await herlaadRitten(data);
+    },
+
+    async wijzig(data, a, oud, rit, bericht) {
+      if (!inSupabase(data)) {
+        return bewaarRitten(data, (lijst) => {
+          const eigen = ritVoorDitSpoor(data, lijst, oud, a);
+          if (eigen !== oud) rit.id = a.id;
+          const i = vindRit(lijst, eigen);
+          if (i < 0) throw new Error("Deze rit is intussen op een andere plek gewijzigd. Laad de pagina opnieuw en probeer het nog eens.");
+          lijst[i] = rit;
+          return lijst;
+        }, bericht);
+      }
+      const sporen = sporenVanRit(data, a, oud);
+      const velden = naarRij({ ...rit, id: sporen ? a.id : oud.id });
+      await sbWijzigRij(oud._rij, velden);
+      // De rit gold voor alle sporen: de andere sporen houden hun eigen kopie
+      if (sporen) {
+        const kopieen = sporen.filter((s) => s !== a).map((s) => naarRij({ ...oud, id: s.id }));
+        if (kopieen.length) await sbVraag(sb.from("ritten").insert(kopieen), "Opslaan lukte niet");
+      }
+      await herlaadRitten(data);
+    },
+
+    async verwijder(data, a, oud, bericht) {
+      if (!inSupabase(data)) {
+        return bewaarRitten(data, (lijst) => {
+          const i = vindRit(lijst, ritVoorDitSpoor(data, lijst, oud, a));
+          if (i < 0) throw new Error("Deze rit staat niet meer in gereden.json. Laad de pagina opnieuw.");
+          lijst.splice(i, 1);
+          return lijst;
+        }, bericht);
+      }
+      const sporen = sporenVanRit(data, a, oud);
+      if (sporen) {
+        const kopieen = sporen.filter((s) => s !== a).map((s) => naarRij({ ...oud, id: s.id }));
+        if (kopieen.length) await sbVraag(sb.from("ritten").insert(kopieen), "Verwijderen lukte niet");
+      }
+      const weg = await sbVraag(sb.from("ritten").delete().eq("id", oud._rij).select("id"), "Verwijderen lukte niet");
+      if (!weg.length) throw new Error("Deze rit bestaat niet meer. Laad de pagina opnieuw.");
+      await herlaadRitten(data);
+    },
+  };
+
+  async function sbWijzigRij(rij, velden) {
+    const d = await sbVraag(sb.from("ritten").update(velden).eq("id", rij).select("id"), "Opslaan lukte niet");
+    if (!d.length) throw new Error("Deze rit bestaat niet meer. Laad de pagina opnieuw.");
+  }
+
+  // Wordt er na het opslaan nog iets gepubliceerd (GitHub), of zie je het meteen (Supabase)?
+  const opgeslagenTekst = (data, wat = "Opgeslagen") =>
+    inSupabase(data) ? `${wat}.` : `${wat}. Over een paar minuten staat het ook op de openbare site.`;
 
   /* ---------- Startpagina ---------- */
 
@@ -541,15 +718,18 @@
     setTimeout(rit, 500);
   }
 
-  function vulHero(gereden) {
+  const telLanden = (banen) => new Set(banen.map((a) => a.land).filter(Boolean)).size;
+  const telParken = (banen) => new Set(banen.map((a) => a.parkId || a.park).filter(Boolean)).size;
+
+  function vulHero(data) {
+    const gereden = data.gereden;
     const n = gereden.length;
     $("#aantal").textContent = getal(n);
     $("#teller-uitleg").textContent = meervoud(n, "achtbaan gereden", "achtbanen gereden");
-    const landen = new Set(gereden.map((a) => a.land).filter(Boolean)).size;
-    const parken = new Set(gereden.map((a) => a.parkId || a.park).filter(Boolean)).size;
+    const landen = telLanden(gereden), parken = telParken(gereden);
     $("#teller-sub").textContent = n
       ? `in ${landen} ${meervoud(landen, "land", "landen")} en ${parken} ${meervoud(parken, "park", "parken")}`
-      : beheer
+      : magRitten(data)
         ? "De teller staat nog op nul. Kies Afvinken bij Alle achtbanen, of open een achtbaan en kies Zet op mijn lijst."
         : "De teller staat nog op nul.";
   }
@@ -630,7 +810,7 @@
   };
 
   function kaartHtml(a, gekozen) {
-    const foto = a.rit?.foto || a.foto;
+    const foto = a.eigenFoto || a.rit?.foto || a.foto;
     const src = fotoBron(foto, 500);
     const plek = [a.park, a.land].filter(Boolean).join(", ");
     const eigen = eigenPad(foto);
@@ -686,6 +866,7 @@
 
     function bewaarInAdres() {
       const u = new URLSearchParams();
+      if (params.get("wie")) u.set("wie", params.get("wie")); // profielpagina: wie blijft staan
       if (st.q) u.set("q", st.q);
       if (st.land) u.set("land", st.land);
       if (st.status) u.set("status", st.status);
@@ -746,16 +927,22 @@
       tekenAfvink();
     }
 
-    /* ---------- Afvinkmodus (alleen beheer) ----------
+    /* ---------- Afvinkmodus (je eigen lijst) ----------
        Een vinkje op elk kaartje. Je keuze blijft bewaard als je filtert of de pagina
-       herlaadt. Opslaan zet alles in één keer (één commit) in gereden.json. */
-    const AFVINK = "achtbanen-afvink";
+       herlaadt. Opslaan zet alles in één keer in je account (zonder Supabase: in één
+       commit in gereden.json). Achtbaan ontbreekt is alleen voor beheer. */
+    const kanAfvinken = magRitten(data);
+    const eigenaarMoetOverzetten = !kanAfvinken && !!(data.persoon && data.persoon.nogOverzetten && ik && ik.gebruikersnaam === SITE.eigenaar);
+    const balkNodig = kanAfvinken || beheer || eigenaarMoetOverzetten;
+    const AFVINK = `achtbanen-afvink${data.persoon && data.persoon.profiel ? `-${data.persoon.profiel.id}` : ""}`;
     const af = { aan: false, gekozen: new Set() };
-    if (beheer) {
-      try {
-        const b = JSON.parse(opslag.lees(AFVINK) || "null");
-        if (b) { af.aan = !!b.aan; af.gekozen = new Set((b.ids || []).filter((id) => data.perId.has(id))); }
-      } catch (e) { /* begin leeg */ }
+    if (balkNodig) {
+      if (kanAfvinken) {
+        try {
+          const b = JSON.parse(opslag.lees(AFVINK) || "null");
+          if (b) { af.aan = !!b.aan; af.gekozen = new Set((b.ids || []).filter((id) => data.perId.has(id))); }
+        } catch (e) { /* begin leeg */ }
+      }
       el.filters.insertAdjacentHTML("afterend", '<div class="beheer-balk" id="beheer-balk"></div>');
       $("#overzicht").insertAdjacentHTML("beforeend", '<div class="afvink-balk" id="afvink-balk" hidden></div>');
     }
@@ -763,12 +950,15 @@
     const nogTeKiezen = () => resultaat.filter((a) => !a.rit && !af.gekozen.has(a.id));
 
     function tekenAfvink() {
-      if (!beheer) return;
+      if (!balkNodig) return;
       const balk = $("#beheer-balk"), onder = $("#afvink-balk");
       if (!af.aan) {
-        balk.innerHTML = `<button class="knop knop-licht" type="button" id="afvink-aan">Afvinken</button>
-          <button class="knop knop-licht" type="button" id="ontbreekt">Achtbaan ontbreekt</button>
-          <span class="klein">Snel een hele rij achtbanen op je lijst zetten, of er zelf een toevoegen.</span>`;
+        const uitleg = kanAfvinken && beheer ? "Snel een hele rij achtbanen op je lijst zetten, of er zelf een toevoegen."
+          : kanAfvinken ? "Snel een hele rij achtbanen op je lijst zetten." : beheer ? "Staat een achtbaan er niet tussen? Voeg hem zelf toe." : "";
+        balk.innerHTML = `${eigenaarMoetOverzetten ? '<p><strong>Je credits staan nog in gereden.json.</strong> <a href="account.html">Zet ze over naar je account</a>, dan kun je hier weer afvinken.</p>' : ""}
+          ${kanAfvinken ? '<button class="knop knop-licht" type="button" id="afvink-aan">Afvinken</button>' : ""}
+          ${beheer ? '<button class="knop knop-licht" type="button" id="ontbreekt">Achtbaan ontbreekt</button>' : ""}
+          ${uitleg ? `<span class="klein">${uitleg}</span>` : ""}`;
         onder.hidden = true;
         return;
       }
@@ -806,25 +996,23 @@
       const bericht = banen.length === 1
         ? `Credit afgevinkt: ${banen[0].naam}`
         : `${banen.length} credits afgevinkt\n\n${banen.map((a) => `- ${a.naam}${a.park ? ` (${a.park})` : ""}`).join("\n")}`;
-      const gelukt = await metKnop(knop, fout, "Opslaan…", () => bewaarRitten(data, (ritten) => {
-        // Staat een baan intussen al op je lijst (bijvoorbeeld via je telefoon), dan niet nog een keer
-        const al = new Set(ritten.map((r) => r && data.perId.get(r.id)).filter(Boolean));
-        return [...ritten, ...banen.filter((a) => !al.has(a)).map((a) => (jaar ? { id: a.id, datum: jaar } : { id: a.id }))];
-      }, bericht));
+      // Staat een baan intussen al op je lijst (bijvoorbeeld via je telefoon), dan niet nog een keer
+      const nieuw = banen.map((a) => (jaar ? { id: a.id, datum: jaar } : { id: a.id }));
+      const gelukt = await metKnop(knop, fout, "Opslaan…", () => ritBron.voegToe(data, nieuw, bericht, true));
       if (!gelukt) return;
       af.gekozen.clear();
       bewaarAfvink();
       naWijziging();
       bereken();
       toon(false);
-      toast(`${getal(banen.length)} ${meervoud(banen.length, "credit", "credits")} opgeslagen. Bezoekers zien het over een paar minuten.`, true);
+      toast(`${getal(banen.length)} ${meervoud(banen.length, "credit", "credits")} opgeslagen.${inSupabase(data) ? "" : " Bezoekers zien het over een paar minuten."}`, true);
     }
 
-    if (beheer) {
+    if (balkNodig) {
       $("#overzicht").addEventListener("click", (e) => {
         const knop = e.target.closest("button");
         if (!knop) return;
-        if (knop.id === "afvink-aan") { af.aan = true; bewaarAfvink(); toon(false); }
+        if (knop.id === "afvink-aan" && kanAfvinken) { af.aan = true; bewaarAfvink(); toon(false); }
         if (knop.id === "afvink-stop") {
           if (af.gekozen.size && !confirm(`Stoppen zonder opslaan? Je keuze van ${af.gekozen.size} ${meervoud(af.gekozen.size, "achtbaan", "achtbanen")} gaat verloren.`)) return;
           af.aan = false; af.gekozen.clear(); bewaarAfvink(); toon(false);
@@ -837,7 +1025,7 @@
         }
         if (knop.id === "afvink-niets") { af.gekozen.clear(); bewaarAfvink(); toon(false); }
         if (knop.id === "afvink-opslaan") slaAfvinkOp(knop);
-        if (knop.id === "ontbreekt" || knop.id === "ontbreekt-leeg") openOntbreektVenster(data, st.q);
+        if ((knop.id === "ontbreekt" || knop.id === "ontbreekt-leeg") && beheer) openOntbreektVenster(data, st.q);
       });
       el.raster.addEventListener("change", (e) => {
         const vak = e.target.closest(".afvink-vak");
@@ -901,7 +1089,9 @@
       toonFout($("#raster"), e);
       return;
     }
-    const vulBoven = () => { vulHero(data.gereden); vulFeiten(data.gereden); tekenKaart(data.gereden); };
+    // De startpagina is van de eigenaar: zijn credits uit Supabase, of uit gereden.json
+    zetPersoon(data, await laadEigenaar(data));
+    const vulBoven = () => { vulHero(data); vulFeiten(data.gereden); tekenKaart(data.gereden); };
     vulBoven();
     startOverzicht(data, vulBoven);
     if (data.bijgewerkt) $("#bijgewerkt").textContent = `, bijgewerkt op ${datum(data.bijgewerkt)}`;
@@ -965,16 +1155,17 @@
     ].filter(Boolean).join(", ");
   }
 
-  function ritHtml(a) {
+  function ritHtml(a, data) {
+    const mag = magRitten(data);
     if (!a.rit) {
-      return beheer
+      return mag
         ? `<section class="blok"><div class="mijn-rit"><p>Deze staat nog niet op je lijst.</p>
              <button class="knop" type="button" data-rit-nieuw>Zet op mijn lijst</button></div></section>`
         : "";
     }
     const r = a.rit;
     let lijst = "";
-    if (beheer) {
+    if (mag) {
       // Alleen jij: elke rit met een knop om hem te bewerken of te verwijderen
       lijst = `<p>${a.ritten.length === 1 ? "Je rit:" : `${a.ritten.length} keer gereden:`}</p>
         <ul class="ritten ritten-beheer">${a.ritten.map((x, i) => `<li>
@@ -991,7 +1182,7 @@
         ${r.notitie && a.ritten.length === 1 ? `<p class="notitie">${esc(r.notitie)}</p>` : ""}
         ${r.cijfer ? `<p><strong>Mijn cijfer: ${getal(r.cijfer, 1)}/10</strong></p>` : ""}
         ${lijst}
-        ${beheer ? `<button class="knop knop-licht" type="button" data-rit-nieuw>Nog een rit toevoegen</button>` : ""}
+        ${mag ? `<button class="knop knop-licht" type="button" data-rit-nieuw>Nog een rit toevoegen</button>` : ""}
       </div></section>`;
   }
 
@@ -1076,23 +1267,12 @@
         <label data-wanneer="datum">Datum <input type="date" id="rit-datum" max="${vandaag()}" value="${esc(wanneer === "datum" ? was.slice(0, 10) : vandaag())}"></label>
         <label>Cijfer van 1 tot 10 (mag leeg) <input type="text" id="rit-cijfer" inputmode="decimal" placeholder="bijvoorbeeld 8,5" value="${esc(v.cijfer != null ? String(v.cijfer).replace(".", ",") : "")}"></label>
         <label>Notitie (mag leeg) <input type="text" id="rit-notitie" maxlength="200" placeholder="Bijvoorbeeld: voorste rij, regen" value="${esc(v.notitie || "")}"></label>
-        <div class="foto-kiezen">
-          <span class="foto-kiezen-titel">Eigen foto (mag leeg)</span>
-          <div class="foto-kiezen-rij">
-            <span class="foto-voorbeeld" id="rit-voorbeeld">${v.foto ? `<img src="${esc(fotoBron(v.foto, 300))}" alt="Je foto"${eigenPad(v.foto) ? ` data-eigen="${esc(eigenPad(v.foto))}"` : ""}>` : ""}</span>
-            <span class="foto-kiezen-knoppen">
-              <label class="knop knop-licht knop-bestand"><span id="rit-bestand-tekst">${v.foto ? "Andere foto kiezen" : "Kies een foto"}</span><input class="sr" type="file" id="rit-bestand" accept="image/*"></label>
-              <button class="knop-klein knop-gevaar" type="button" id="rit-foto-weg"${v.foto ? "" : " hidden"}>Foto weghalen</button>
-            </span>
-          </div>
-          <p class="klein" id="rit-foto-info">${v.foto ? "" : "Van je telefoon of computer. De site maakt hem eerst kleiner (maximaal 1600 pixels breed)."}</p>
-        </div>
         <p class="fout" id="rit-fout" role="alert"></p>
         <div class="knoppen">
           <button class="knop" type="submit" id="rit-opslaan">${oud ? "Wijziging opslaan" : "Zet op mijn lijst"}</button>
           <button class="knop knop-licht" type="button" id="rit-sluit">Annuleren</button>
         </div>
-        <p class="klein">Wordt meteen opgeslagen in <code>data/gereden.json</code> op GitHub. Bezoekers zien het na een paar minuten.</p>
+        <p class="klein">${inSupabase(data) ? "Wordt meteen opgeslagen in je account." : "Wordt meteen opgeslagen in <code>data/gereden.json</code> op GitHub. Bezoekers zien het na een paar minuten."}</p>
       </form>`);
 
     const veld = (id) => $(`#${id}`, d);
@@ -1131,73 +1311,25 @@
       const cijfer = parseFloat(ruwCijfer.replace(",", "."));
       if (ruwCijfer && !(cijfer >= 1 && cijfer <= 10)) throw new Error("Een cijfer moet tussen 1 en 10 liggen.");
       zet("cijfer", ruwCijfer ? cijfer : "");
-      zet("notitie", veld("rit-notitie").value.trim());
-      if (fotoKeuze.weg) delete rit.foto;
+      const notitie = netteTekst(veld("rit-notitie").value);
+      if (notitie.length > 200) throw new Error("Een notitie mag hooguit 200 tekens hebben.");
+      zet("notitie", notitie);
       for (const k of Object.keys(rit)) if (rit[k] === undefined) delete rit[k];
       return rit;
     }
-
-    // Eigen foto: meteen verkleinen in de browser, uploaden pas bij Opslaan
-    const fotoKeuze = { blob: null, weg: false };
-    const voorbeeld = veld("rit-voorbeeld");
-    voorbeeld.addEventListener("error", (e) => { if (e.target.tagName === "IMG") fotoMislukt(e.target); }, true);
-    veld("rit-bestand").addEventListener("change", async (e) => {
-      const bestand = e.target.files && e.target.files[0];
-      if (!bestand) return;
-      const info = veld("rit-foto-info");
-      info.textContent = "Foto verkleinen…";
-      veld("rit-fout").textContent = "";
-      try {
-        const klein = await verkleinFoto(bestand, 1600);
-        fotoKeuze.blob = klein.blob;
-        fotoKeuze.weg = false;
-        voorbeeld.innerHTML = "";
-        voorbeeld.appendChild(Object.assign(new Image(), { src: URL.createObjectURL(klein.blob), alt: "Je foto" }));
-        info.textContent = `Klaar: ${klein.breedte} × ${klein.hoogte} pixels, ${getal(klein.blob.size / 1024)} kB. Wordt geüpload als je opslaat.`;
-        veld("rit-foto-weg").hidden = false;
-        veld("rit-bestand-tekst").textContent = "Andere foto kiezen";
-      } catch (fout) {
-        console.error(fout);
-        info.textContent = "";
-        veld("rit-fout").textContent = fout.message;
-      }
-      e.target.value = "";
-    });
-    veld("rit-foto-weg").addEventListener("click", () => {
-      fotoKeuze.blob = null;
-      fotoKeuze.weg = true;
-      voorbeeld.innerHTML = "";
-      veld("rit-foto-weg").hidden = true;
-      veld("rit-bestand-tekst").textContent = "Kies een foto";
-      veld("rit-foto-info").textContent = v.foto ? "De foto wordt van deze rit gehaald als je opslaat. Het bestand blijft in de map fotos staan." : "";
-    });
 
     veld("rit-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       let rit;
       try { rit = leesFormulier(); } catch (fout) { veld("rit-fout").textContent = fout.message; return; }
       const knop = veld("rit-opslaan");
-      const gelukt = await metKnop(knop, veld("rit-fout"), "Opslaan…", async () => {
-        if (fotoKeuze.blob) {
-          knop.textContent = "Foto uploaden…";
-          rit.foto = await uploadFoto(a, fotoKeuze.blob);
-          fotoKeuze.blob = null; // niet nog eens uploaden als het opslaan hierna mislukt
-          knop.textContent = "Opslaan…";
-        }
-        await bewaarRitten(data, (lijst) => {
-          if (!oud) return [...lijst, rit];
-          const eigen = ritVoorDitSpoor(data, lijst, oud, a);
-          if (eigen !== oud) rit.id = a.id;
-          const i = vindRit(lijst, eigen);
-          if (i < 0) throw new Error("Deze rit is intussen op een andere plek gewijzigd. Laad de pagina opnieuw en probeer het nog eens.");
-          lijst[i] = rit;
-          return lijst;
-        }, `${oud ? "Rit bewerkt" : "Rit toegevoegd"}: ${a.naam}`);
-      });
+      const bericht = `${oud ? "Rit bewerkt" : "Rit toegevoegd"}: ${a.naam}`;
+      const gelukt = await metKnop(knop, veld("rit-fout"), "Opslaan…", () =>
+        (oud ? ritBron.wijzig(data, a, oud, rit, bericht) : ritBron.voegToe(data, [rit], bericht)));
       if (!gelukt) return;
       d.close();
       klaar();
-      toast("Opgeslagen. Over een paar minuten staat het ook op de openbare site.", true);
+      toast(opgeslagenTekst(data), true);
     });
   }
 
@@ -1257,16 +1389,10 @@
 
   async function verwijderRit(a, data, rit, knop, klaar) {
     if (!confirm(`Deze rit op ${a.naam} verwijderen?\n${ritOmschrijving(rit)}`)) return;
-    const gelukt = await metKnop(knop, null, "Bezig…", () =>
-      bewaarRitten(data, (lijst) => {
-        const i = vindRit(lijst, ritVoorDitSpoor(data, lijst, rit, a));
-        if (i < 0) throw new Error("Deze rit staat niet meer in gereden.json. Laad de pagina opnieuw.");
-        lijst.splice(i, 1);
-        return lijst;
-      }, `Rit verwijderd: ${a.naam}`));
+    const gelukt = await metKnop(knop, null, "Bezig…", () => ritBron.verwijder(data, a, rit, `Rit verwijderd: ${a.naam}`));
     if (!gelukt) return;
     klaar();
-    toast("Verwijderd. Over een paar minuten is het ook van de openbare site af.", true);
+    toast(inSupabase(data) ? "Verwijderd." : "Verwijderd. Over een paar minuten is het ook van de openbare site af.", true);
   }
 
   /* ---------- Venster: achtbaan ontbreekt (alleen beheer) ----------
@@ -1302,7 +1428,7 @@
           </div>
           <button class="knop-klein" type="button" id="nieuw-hier">Gebruik mijn locatie</button>
         </fieldset>
-        <label class="vinkje"><input type="checkbox" id="nieuw-gereden" checked> Meteen op mijn lijst zetten (zonder datum)</label>
+        ${!sbAan || ik ? '<label class="vinkje"><input type="checkbox" id="nieuw-gereden" checked> Meteen op mijn lijst zetten (zonder datum)</label>' : ""}
         <div id="nieuw-dubbel"></div>
         <p class="fout" id="nieuw-fout" role="alert"></p>
         <div class="knoppen">
@@ -1379,13 +1505,14 @@
         geopend: jaar ? Number(jaar) : undefined,
         lat, lon,
       };
-      const ookRit = veld("nieuw-gereden").checked;
+      const ookRit = !!veld("nieuw-gereden")?.checked;
       const gelukt = await metKnop(veld("nieuw-opslaan"), fout, "Opslaan…", async () => {
         await wijzigJson("data/extra.json", "achtbanen", (lijst) => {
           if (lijst.some((x) => x && x.id === id)) return lijst;
           return [...lijst, nieuw];
         }, `Achtbaan toegevoegd aan extra.json: ${naam}`);
-        if (ookRit) await wijzigJson("data/gereden.json", "gereden", (ritten) => [...ritten, { id }], `Rit toegevoegd: ${naam}`);
+        if (ookRit && sbAan) await sbVraag(sb.from("ritten").insert(naarRij({ id })), "De achtbaan staat erin, maar je rit opslaan lukte niet");
+        else if (ookRit) await wijzigJson("data/gereden.json", "gereden", (ritten) => [...ritten, { id }], `Rit toegevoegd: ${naam}`);
       });
       if (!gelukt) return;
       d.close();
@@ -1426,7 +1553,20 @@
         <button class="knop knop-licht" type="button" data-terugzetten>Terugzetten</button></div></section>`;
     }
     const voorstel = !a.deelVan && data.voorstellen[a.id];
+    const foto = a.eigenFoto;
     return `<section class="blok"><h2>Beheer</h2><div class="mijn-rit beheer-blok">
+      <div class="foto-kiezen">
+        <span class="foto-kiezen-titel">Eigen foto</span>
+        <div class="foto-kiezen-rij">
+          <span class="foto-voorbeeld" id="beheer-voorbeeld">${foto ? `<img src="${esc(fotoBron(foto, 300))}" alt="Je foto"${eigenPad(foto) ? ` data-eigen="${esc(eigenPad(foto))}"` : ""}>` : ""}</span>
+          <span class="foto-kiezen-knoppen">
+            <label class="knop knop-licht knop-bestand"><span id="beheer-bestand-tekst">${foto ? "Andere foto kiezen" : "Kies een foto"}</span><input class="sr" type="file" id="beheer-bestand" accept="image/*"></label>
+            <button class="knop-klein knop-gevaar" type="button" id="beheer-foto-weg"${foto ? "" : " hidden"}>Foto weghalen</button>
+          </span>
+        </div>
+        <p class="klein" id="beheer-foto-info">Van je telefoon of computer. De site maakt hem kleiner (maximaal 1600 pixels breed) en haalt de gegevens uit de foto, zoals de plek. Je foto gaat op de hele site voor op die van Wikimedia Commons. Alleen jij kunt foto's toevoegen.</p>
+        <p class="fout" id="beheer-foto-fout" role="alert"></p>
+      </div>
       ${voorstel ? `<p>OpenStreetMap ziet hier ${voorstel.length} sporen met een eigen naam: ${voorstel.map(esc).join(", ")}.</p>` : ""}
       <div class="knoppen-rij">
         ${a.deelVan ? "" : `<button class="knop knop-licht" type="button" data-splits='${voorstel ? esc(JSON.stringify(voorstel)) : ""}'>Splitsen in losse sporen</button>`}
@@ -1481,9 +1621,28 @@
     });
   }
 
-  function openVerbergVenster(a, data) {
-    if (a.ritten && a.ritten.length) {
-      const d = maakVenster(`${a.naam} verbergen`, `<p>Deze baan staat op je lijst. Verwijder eerst je ${a.ritten.length === 1 ? "rit" : "ritten"}, dan kun je hem verbergen.</p>
+  // Alle codes waaronder iemand een rit op deze baan kan hebben: de baan zelf, de hele
+  // baan als dit een spoor is, en oude codes die naar deze baan verwijzen
+  function codesVoor(data, a) {
+    const doel = new Set([a.id, a.deelVan].filter(Boolean));
+    const codes = new Set(doel);
+    for (const [oud, nieuw] of Object.entries(data.aliassen)) if (doel.has(nieuw) && !data.echteIds.has(oud)) codes.add(oud);
+    return [...codes];
+  }
+
+  async function openVerbergVenster(a, data) {
+    let reden = a.ritten && a.ritten.length && (!sbAan || inSupabase(data))
+      ? `Deze baan staat op je lijst. Verwijder eerst je ${a.ritten.length === 1 ? "rit" : "ritten"}, dan kun je hem verbergen.` : "";
+    if (!reden && sbAan) {
+      try {
+        const ritten = await sbVraag(sb.from("ritten").select("achtbaan").in("achtbaan", codesVoor(data, a)), "Controleren");
+        if (ritten.some((r) => banenVanRit(data, r.achtbaan).includes(a))) {
+          reden = "Iemand heeft deze baan op de lijst staan. Een baan die iemand gereden heeft, kun je niet verbergen.";
+        }
+      } catch (e) { toast(e.message, true); return; }
+    }
+    if (reden) {
+      const d = maakVenster(`${a.naam} verbergen`, `<p>${esc(reden)}</p>
         <div class="knoppen"><button class="knop" type="button" id="verberg-sluit">Sluiten</button></div>`);
       $("#verberg-sluit", d).addEventListener("click", () => d.close());
       return;
@@ -1514,6 +1673,44 @@
       d.close();
       toast(`${a.naam} is verborgen.`, true);
       location.href = a.parkId || a.park ? `./?park=${encodeURIComponent(a.parkId || a.park)}#overzicht` : "./#overzicht";
+    });
+  }
+
+  // Eigen foto bij een achtbaan (beheer): verkleinen, uploaden naar fotos/ en vastleggen in data/fotos.json
+  function koppelFotoBeheer(a, data, opnieuw) {
+    const bestandVeld = $("#beheer-bestand");
+    if (!bestandVeld) return;
+    const info = $("#beheer-foto-info"), fout = $("#beheer-foto-fout");
+    $("#beheer-voorbeeld").addEventListener("error", (e) => { if (e.target.tagName === "IMG") fotoMislukt(e.target); }, true);
+    const legVast = (pad, bericht) => wijzigJson("data/fotos.json", "fotos",
+      (lijst) => [...lijst.filter((f) => f && f.id !== a.id), ...(pad ? [{ id: a.id, foto: pad }] : [])], bericht)
+      .then((nieuw) => zetFotos(data, nieuw.fotos || []));
+    bestandVeld.addEventListener("change", async (e) => {
+      const bestand = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!bestand) return;
+      fout.textContent = "";
+      try {
+        info.textContent = "Foto verkleinen…";
+        const klein = await verkleinFoto(bestand, 1600);
+        info.textContent = `Foto uploaden (${getal(klein.blob.size / 1024)} kB)…`;
+        const pad = await uploadFoto(a, klein.blob);
+        info.textContent = "Opslaan…";
+        await legVast(pad, `Foto bij ${a.naam}`);
+        opnieuw();
+        toast("Foto opgeslagen. Bezoekers zien hem over een paar minuten.", true);
+      } catch (f) {
+        console.error(f);
+        info.textContent = "";
+        fout.textContent = f.message;
+      }
+    });
+    $("#beheer-foto-weg").addEventListener("click", (e) => {
+      if (!confirm("Je eigen foto bij deze achtbaan weghalen? Het bestand blijft in de map fotos staan.")) return;
+      metKnop(e.currentTarget, fout, "Bezig…", async () => {
+        await legVast(null, `Foto weggehaald: ${a.naam}`);
+        opnieuw();
+      });
     });
   }
 
@@ -1548,6 +1745,12 @@
       return;
     }
     document.title = `${a.naam}${a.park ? ", " + a.park : ""} | ${SITE.naam}`;
+    // Ingelogd: jouw ritten. Anders die van de eigenaar, zoals altijd.
+    let persoon = null;
+    if (ik) {
+      try { persoon = await laadPersoon(data, ik); } catch (e) { console.warn(e); toast(e.message, true); }
+    }
+    zetPersoon(data, persoon || await laadEigenaar(data));
     if (data.details) {
       try { Object.assign(a, ((await haalJson(data.details, false)) || {})[a.id] || {}); } catch (e) { console.warn(e); }
     }
@@ -1556,7 +1759,7 @@
 
   function tekenAchtbaan(a, data) {
     const vak = $("#inhoud");
-    const eigenFoto = a.rit?.foto;
+    const eigenFoto = a.eigenFoto || a.rit?.foto;
     const fotoVeld = eigenFoto || a.foto;
     const src = fotoBron(fotoVeld, 1280);
     const eigen = eigenPad(fotoVeld);
@@ -1587,7 +1790,7 @@
         ${stempel}
       </header>
       ${specsHtml(a)}
-      ${ritHtml(a)}
+      ${ritHtml(a, data)}
       <div class="twee">
         <section class="over" id="over" hidden><h2>Over deze achtbaan</h2><div id="wiki"></div></section>
         <section class="plaats"><h2>Waar staat hij?</h2><div class="minikaart" id="minikaart" role="region" aria-label="Kaart"></div></section>
@@ -1608,13 +1811,16 @@
 
     tekenMiniKaart(a);
 
-    if (beheer) {
-      const opnieuw = () => tekenAchtbaan(a, data);
+    const opnieuw = () => tekenAchtbaan(a, data);
+    if (magRitten(data)) {
       vak.querySelectorAll("[data-rit-nieuw]").forEach((k) => k.addEventListener("click", () => openRitVenster(a, data, null, opnieuw)));
       vak.querySelectorAll("[data-rit-bewerk]").forEach((k) => k.addEventListener("click", () =>
         openRitVenster(a, data, a.ritten[Number(k.dataset.ritBewerk)], opnieuw)));
       vak.querySelectorAll("[data-rit-weg]").forEach((k) => k.addEventListener("click", () =>
         verwijderRit(a, data, a.ritten[Number(k.dataset.ritWeg)], k, opnieuw)));
+    }
+    if (beheer) {
+      koppelFotoBeheer(a, data, opnieuw);
       $("[data-splits]", vak)?.addEventListener("click", (e) => openSplitsVenster(a, data, e.currentTarget.dataset.splits ? JSON.parse(e.currentTarget.dataset.splits) : null));
       $("[data-verberg]", vak)?.addEventListener("click", () => openVerbergVenster(a, data));
       $("[data-terugzetten]", vak)?.addEventListener("click", (e) => metKnop(e.currentTarget, null, "Bezig…", async () => {
@@ -1683,7 +1889,9 @@
     function teken(melding) {
       const token = leesToken();
       vak.innerHTML = token
-        ? `<p class="beheer-aan"><strong>Beheer staat aan op dit apparaat.</strong> Je ziet nu de knoppen om ritten op te slaan, te bewerken en te verwijderen.</p>
+        ? `<p class="beheer-aan"><strong>Beheer staat aan op dit apparaat.</strong> ${sbAan
+              ? "Je ziet nu de knoppen om achtbanen toe te voegen, foto's te kiezen en banen te splitsen of te verbergen. Je ritten sla je op met je account."
+              : "Je ziet nu de knoppen om ritten op te slaan, te bewerken en te verwijderen."}</p>
            <p class="klein">Token: <code>${esc(token.slice(0, 15))}…${esc(token.slice(-4))}</code></p>
            <div id="token-uitslag" role="status">${melding || ""}</div>
            <div class="knoppen">
@@ -1951,10 +2159,48 @@
       tekenAccount(vak);
       toast("Opgeslagen.");
     });
+    tekenOverzetten();
     $("#uitloggen").addEventListener("click", () => logUit("local"));
     $("#overal-uit").addEventListener("click", () => {
       if (confirm("Op al je apparaten uitloggen? Daarna log je overal opnieuw in met een link per mail.")) logUit("global");
     });
+  }
+
+  // Eenmalig: de credits van de eigenaar uit data/gereden.json naar zijn account.
+  // gereden.json blijft daarna staan als reservekopie.
+  async function tekenOverzetten() {
+    const vak = $("#account-extra");
+    if (!vak || !ik || ik.gebruikersnaam !== SITE.eigenaar) return;
+    let data, mijn;
+    try { [data, mijn] = await Promise.all([laadAlles(), haalRitten(ik.id)]); } catch (e) {
+      vak.innerHTML = `<p class="fout">${esc(e.message)}</p>`;
+      return;
+    }
+    if (mijn.length) {
+      vak.innerHTML = `<p class="klein">Je ${getal(mijn.length)} ritten staan in je account. <code>data/gereden.json</code> blijft als reservekopie in de repository staan.</p>`;
+      return;
+    }
+    const json = data.jsonRitten;
+    if (!json.length) return;
+    const goed = json.filter((r) => ACHTBAAN_ID.test(r.id) && geldigeDatum(r.datum));
+    const mis = json.filter((r) => !goed.includes(r));
+    vak.innerHTML = `<h2 class="beheer-kop">Je credits overzetten</h2>
+      <p>In <code>data/gereden.json</code> staan ${getal(json.length)} ritten. Zet ze één keer over naar je account. Daarna vink je af zoals je vrienden dat doen. <code>gereden.json</code> blijft staan als reservekopie.</p>
+      ${mis.length ? `<p class="fout">${mis.length} ${meervoud(mis.length, "rit heeft", "ritten hebben")} een code of datum die niet klopt en ${meervoud(mis.length, "wordt", "worden")} overgeslagen: ${mis.map((r) => `<code>${esc(r.id)}${r.datum ? ` (${esc(r.datum)})` : ""}</code>`).join(", ")}</p>` : ""}
+      <p class="fout" id="overzetten-fout" role="alert"></p>
+      <div class="knoppen"><button class="knop" type="button" id="overzetten">Zet ${getal(goed.length)} ${meervoud(goed.length, "credit", "credits")} over</button></div>`;
+    $("#overzetten").addEventListener("click", (e) => metKnop(e.currentTarget, $("#overzetten-fout"), "Overzetten…", async () => {
+      if ((await haalRitten(ik.id)).length) throw new Error("Er staan intussen al ritten in je account. Laad de pagina opnieuw.");
+      const rijen = goed.map(naarRij);
+      for (let i = 0; i < rijen.length; i += 500) {
+        await sbVraag(sb.from("ritten").insert(rijen.slice(i, i + 500)), "Overzetten lukte niet");
+      }
+      const nu = await haalRitten(ik.id);
+      vak.innerHTML = `<h2 class="beheer-kop">Je credits overzetten</h2>
+        <p class="goed">✓ ${getal(nu.length)} ritten staan nu in je account.</p>
+        <div class="knoppen"><a class="knop" href="./">Naar de startpagina</a></div>`;
+      toast("Je credits zijn overgezet.", true);
+    }));
   }
 
   async function logUit(waar) {

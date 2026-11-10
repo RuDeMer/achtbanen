@@ -7,7 +7,8 @@ Alle achtbanen van de wereld op één site, met een teller van de achtbanen die 
 | Bestand | Wat het doet |
 | --- | --- |
 | `config.js` | Naam van de site, je GitHub-gegevens en de publieke gegevens van Supabase. Het enige bestand dat je hoeft aan te passen. |
-| `data/gereden.json` | Jouw credits. De site schrijft hier zelf in als je beheer aanzet; met de hand kan ook. |
+| `data/gereden.json` | Jouw credits van vóór de accounts. Met Supabase de reservekopie (zie *Je credits overzetten*); zonder Supabase de echte lijst. |
+| `data/fotos.json` | Welke eigen foto bij welke achtbaan hoort. De site schrijft hier zelf in (beheer). |
 | `data/extra.json` | Achtbanen die niet in Wikidata of OpenStreetMap staan. |
 | `data/splitsen.json` | Banen met meer sporen (zoals Joris en de Draak), die per spoor als eigen achtbaan tellen. |
 | `data/verborgen.json` | Wat niet op de site komt, omdat het geen achtbaan is of dubbel staat. |
@@ -91,9 +92,29 @@ Doe dit vóór je vrienden uitnodigt, zodat niemand anders jouw gebruikersnaam k
 2. Je vriend krijgt een mail, tikt op de link, kiest een naam en een gebruikersnaam, en kan meteen credits afvinken.
 3. Daarna logt je vriend in via **Inloggen** op de site: e-mailadres invullen, link in de mail aantikken. Een wachtwoord is er niet.
 
-Is de uitnodiging verlopen (na een uur)? Nodig gewoon opnieuw uit op dezelfde manier. Wil iemand niet meer meedoen? Ook **Delete user**: dan verdwijnen account, profiel en credits samen.
+Is de uitnodiging verlopen (na een uur)? Nodig gewoon opnieuw uit op dezelfde manier. Wil iemand niet meer meedoen? Kies bij **Users** de drie puntjes en **Delete user**: dan verdwijnen account, profiel en credits samen.
 
-## Beheer: ritten opslaan zonder kopiëren en plakken
+### Je credits overzetten (één keer)
+
+Zolang jouw account nog geen ritten heeft, toont de startpagina gewoon je credits uit `data/gereden.json`. Zo zet je ze over:
+
+1. Log in op de site en open **Mijn account** (je naam rechtsboven).
+2. Onder je profiel staat **Je credits overzetten**, met het aantal ritten. Kies **Zet … credits over**.
+3. Klaar. Vanaf nu vink je af, bewerk je en verwijder je ritten met je account, net als je vrienden. De knop verdwijnt; overzetten kan maar één keer.
+
+`data/gereden.json` blijft in de repository staan als reservekopie. De site wijzigt hem niet meer. Is Supabase een keer niet bereikbaar (bijvoorbeeld als het project op pauze staat), dan toont de startpagina deze reservekopie, met een melding.
+
+### Credits afvinken (voor iedereen met een account)
+
+- **Zet op mijn lijst** op de pagina van een achtbaan. De datum is niet verplicht: kies *Geen datum*, *Alleen een jaar* of *Volledige datum*. Cijfer en notitie mogen ook leeg blijven.
+- **Bewerken** en **Verwijderen** bij elke rit.
+- **Afvinken** in het overzicht van je eigen lijst (zie *Afvinkmodus* hieronder).
+
+Wat je opslaat staat meteen op de site, voor iedereen. Op de pagina van een achtbaan zie je, als je bent ingelogd, je eigen rit. Bezoekers zonder account zien jouw rit, zoals altijd.
+
+## Beheer: de lijst en je foto's (alleen jij)
+
+Achtbanen toevoegen, eigen foto's, en banen splitsen of verbergen blijft alleen voor jou, via GitHub. Je vrienden kunnen dat niet: daarvoor is een token nodig dat alleen jij hebt. (Zonder Supabase sla je met beheer ook je ritten op in `gereden.json`, zoals vroeger.)
 
 Je zet beheer aan met een *fine-grained token* van GitHub. Dat is een soort wachtwoord dat alleen in deze ene repository mag schrijven. Het token blijft in de browser op je eigen apparaat (in `localStorage`). Het komt nooit in de repository en niet in de code. Bezoekers zonder token zien de site zoals altijd, zonder beheerknoppen.
 
@@ -118,12 +139,10 @@ Goed om te weten: alle GitHub Pages-sites van één account delen hetzelfde adre
 
 ### Wat je met beheer kunt
 
-- **Zet op mijn lijst** op de pagina van een achtbaan. De datum is niet verplicht: kies *Geen datum*, *Alleen een jaar* of *Volledige datum*. Cijfer, notitie en foto mogen ook leeg blijven.
-- **Bewerken** en **Verwijderen** bij elke rit.
-- **Afvinken** in het overzicht (zie hieronder).
 - **Achtbaan ontbreekt**: een achtbaan toevoegen aan `data/extra.json`.
-- **Eigen foto** bij een rit, rechtstreeks vanaf je telefoon.
+- **Eigen foto** bij een achtbaan, rechtstreeks vanaf je telefoon (zie *Eigen foto's*).
 - **Splitsen in losse sporen** en **Verbergen**, onderaan de pagina van een baan (zie hieronder).
+- Zonder Supabase ook: **Zet op mijn lijst**, **Bewerken**, **Verwijderen** en **Afvinken** voor je ritten in `gereden.json`.
 
 Alles wordt meteen opgeslagen in de repository. Jij ziet de wijziging direct; bezoekers na een paar minuten, als GitHub de site opnieuw heeft gepubliceerd. Heeft iets anders het bestand net gewijzigd, dan haalt de site het opnieuw op en probeert het nog eens, zodat er niets verloren gaat.
 
@@ -133,18 +152,18 @@ Alles wordt meteen opgeslagen in de repository. Jij ziet de wijziging direct; be
 2. Filter op een park, land of zoekwoord. Tik op elke achtbaan die je gereden hebt, of kies **Alles kiezen** voor alles wat je nu ziet.
 3. Wissel gerust van filter: je keuze blijft bewaard, ook als je de pagina herlaadt.
 4. Vul eventueel een jaar in dat voor allemaal geldt, of laat het leeg.
-5. Kies **Opslaan**. Alles gaat in één keer (één commit) naar `gereden.json`.
+5. Kies **Opslaan**. Alles gaat in één keer naar je account (zonder Supabase: in één commit naar `gereden.json`).
 
 ### Ritten zonder datum
 
 Ritten zonder datum tellen gewoon mee voor de teller, de landen en de parken. Voor de records *Eerste credit* en *Nieuwste credit* telt een achtbaan alleen mee als al je ritten erop een datum hebben. Heeft één rit geen datum, dan weten we niet wanneer je hem voor het eerst reed.
 
-## Een rit met de hand toevoegen
+## Een rit met de hand toevoegen (zonder Supabase)
 
-Het kan nog steeds zonder beheer: open `data/gereden.json` op GitHub en zet er een regel in, bijvoorbeeld:
+Zolang je geen accounts gebruikt, kan het ook zonder beheer: open `data/gereden.json` op GitHub en zet er een regel in, bijvoorbeeld:
 
 ```json
-{ "id": "Q12345", "datum": "2025-07-14", "cijfer": 8.5, "notitie": "Voorste rij", "foto": "fotos/mijn-foto.jpg" },
+{ "id": "Q12345", "datum": "2025-07-14", "cijfer": 8.5, "notitie": "Voorste rij" },
 ```
 
 Alleen `id` is verplicht. De code staat in het adres van de attractiepagina (`Q…` voor Wikidata, `osm-way-…` voor OpenStreetMap, `x-…` voor je eigen achtbanen). Een datum mag ook alleen een jaar zijn (`"2006"`). Een komma na de laatste regel is geen probleem. Heb je een achtbaan vaker gereden, zet hem er dan nog een keer in.
@@ -161,7 +180,7 @@ Ongedaan maken: haal de regel weg uit `data/splitsen.json`.
 
 OpenStreetMap noemt soms ook andere dingen een achtbaan. Het script laat bij banen die alleen in OpenStreetMap staan dit weg: losse stations, zomerrodelbanen en alpine coasters, waterattracties en andere attracties (darkrides, treintjes, speelplaatsen), dingen waarvan de Wikidata-koppeling zegt dat het geen achtbaan is, en banen buiten een pretpark zonder RCDB-nummer. VR-versies, zoals EuroSat Coastiality, horen bij de echte baan: een rit erop telt voor die baan.
 
-Staat er nog iets tussen wat geen achtbaan is, of dubbel staat: open het en kies onderaan **Verbergen**. Het komt dan in `data/verborgen.json` en verdwijnt van de site. Terugzetten kan op de beheerpagina. Banen die je hebt gereden kun je niet verbergen; verwijder dan eerst je rit.
+Staat er nog iets tussen wat geen achtbaan is, of dubbel staat: open het en kies onderaan **Verbergen**. Het komt dan in `data/verborgen.json` en verdwijnt van de site. Terugzetten kan op de beheerpagina. Een baan die iemand gereden heeft (jij of een vriend) kun je niet verbergen.
 
 ## Een achtbaan die niet in de lijst staat
 
@@ -177,7 +196,7 @@ Nog mooier: voeg hem toe aan [Wikidata](https://www.wikidata.org) of [OpenStreet
 
 ## Eigen foto's
 
-Kies bij een rit **Kies een foto**. De browser maakt hem kleiner (maximaal 1600 pixels breed), draait hem goed en haalt de gegevens uit de foto (zoals de plek waar hij gemaakt is). Daarna komt hij in `fotos/`. Je eigen foto gaat altijd voor op de foto van Wikimedia Commons.
+Alleen met beheer. Open een achtbaan en kies onderaan bij **Beheer** **Kies een foto**. De browser maakt hem kleiner (maximaal 1600 pixels breed), draait hem goed en haalt de gegevens uit de foto (zoals de plek waar hij gemaakt is). Daarna komt hij in `fotos/` en in `data/fotos.json`. Je eigen foto gaat op de hele site voor op de foto van Wikimedia Commons, ook op de profielen van je vrienden. **Foto weghalen** haalt hem van de site; het bestand blijft in `fotos/` staan. Vrienden kunnen geen foto's uploaden.
 
 ## Lijst nu meteen bijwerken
 
@@ -197,7 +216,7 @@ Beveiligingen:
 - Lukt alleen OpenStreetMap niet, dan blijven de OSM-gegevens van de vorige keer staan.
 - Lukt het zoeken of controleren van foto's niet, dan blijven de eerder goedgekeurde foto's.
 - Krijgt een achtbaan een andere code (bijvoorbeeld omdat een OSM-baan nu ook in Wikidata staat), dan blijft de oude code werken.
-- Staat een code uit `gereden.json` nergens meer in, dan blijft de oude regel staan, zodat je credit niet verdwijnt.
+- Staat een code uit `gereden.json`, of uit de ritten van iemand in Supabase, nergens meer in, dan blijft de oude regel staan, zodat geen credit verdwijnt. (Het script leest de ritten met de publieke sleutel uit `config.js`.)
 
 ## Bronnen en licenties
 

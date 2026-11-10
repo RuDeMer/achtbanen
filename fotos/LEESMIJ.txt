@@ -1,14 +1,16 @@
 Hier staan je eigen foto's.
 
-De makkelijkste manier: open op de site een achtbaan, kies Bewerken bij je rit
-(of Zet op mijn lijst) en kies Kies een foto. Dat werkt ook vanaf je telefoon.
-De site maakt de foto eerst kleiner (maximaal 1600 pixels breed), haalt de
-gegevens uit de foto (zoals de plek waar hij gemaakt is) en zet hem hier neer.
+De makkelijkste manier: zet beheer aan (beheer.html), open op de site een
+achtbaan en kies onderaan bij Beheer "Kies een foto". Dat werkt ook vanaf je
+telefoon. De site maakt de foto eerst kleiner (maximaal 1600 pixels breed),
+haalt de gegevens uit de foto (zoals de plek waar hij gemaakt is), zet hem
+hier neer en schrijft in data/fotos.json bij welke achtbaan hij hoort.
 
 Met de hand kan het ook: zet een foto hier neer, bijvoorbeeld baron-1898.jpg,
-en verwijs ernaar in data/gereden.json met "foto": "fotos/baron-1898.jpg".
+en zet in data/fotos.json een regel als
+  { "id": "Q18285730", "foto": "fotos/baron-1898.jpg" }
 Maak hem dan eerst zelf kleiner (zo'n 1600 pixels breed) zodat de site snel blijft.
 
 Je eigen foto gaat altijd voor op de foto van Wikimedia Commons.
-Haal je een foto weg bij een rit, dan blijft het bestand hier staan. Wil je het
-echt kwijt, verwijder het dan op GitHub.
+Haal je een foto weg, dan blijft het bestand hier staan. Wil je het echt kwijt,
+verwijder het dan op GitHub. Vrienden met een account kunnen geen foto's uploaden.
