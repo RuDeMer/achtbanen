@@ -1,6 +1,6 @@
 # Rubens Achtbanen
 
-Alle achtbanen van de wereld op één site, met een teller van de achtbanen die ik gereden heb.
+Alle achtbanen van de wereld op één site, met een teller van de achtbanen die ik gereden heb. Vrienden met een account houden hun eigen credits bij; we bekijken en vergelijken elkaars lijsten.
 
 ## Wat staat waar
 
