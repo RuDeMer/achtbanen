@@ -9,17 +9,22 @@ Alle achtbanen van de wereld op één site, met een teller van de achtbanen die 
 | `config.js` | Naam van de site, je GitHub-gegevens en de publieke gegevens van Supabase. Het enige bestand dat je hoeft aan te passen. |
 | `data/gereden.json` | Jouw credits van vóór de accounts. Met Supabase de reservekopie (zie *Je credits overzetten*); zonder Supabase de echte lijst. |
 | `data/fotos.json` | Welke eigen foto bij welke achtbaan hoort. De site schrijft hier zelf in (beheer). |
+| `data/aanvullingen.json` | Je eigen gegevens (hoogte, snelheid, type, ...) met de bron erbij. Gaan voor op alle andere bronnen. De site schrijft hier zelf in (beheer, *Gegevens aanvullen*). |
 | `data/extra.json` | Achtbanen die niet in Wikidata of OpenStreetMap staan. |
 | `data/splitsen.json` | Banen met meer sporen (zoals Joris en de Draak), die per spoor als eigen achtbaan tellen. |
 | `data/verborgen.json` | Wat niet op de site komt, omdat het geen achtbaan is of dubbel staat. |
-| `data/achtbanen.json` | Wordt automatisch gemaakt. Niet zelf aanpassen. Valt onder de ODbL (zie Bronnen). |
-| `data/details.json` | Bestaat alleen als `achtbanen.json` groter zou worden dan 3 MB. Ook automatisch. |
+| `data/achtbanen.json` | De lijst met de belangrijkste gegevens per achtbaan. Wordt automatisch gemaakt; niet zelf aanpassen. Valt onder de ODbL (zie Bronnen). |
+| `data/details/` | De rest per achtbaan (valhoogte, ritduur, model, de bron van elk gegeven, links naar Wikipedia), verdeeld over 16 kleine bestanden zodat de site snel blijft. Ook automatisch. |
+| `data/rapport.json` | Het kwaliteitsrapport van de laatste run: hoeveel achtbanen een foto, hoogte, snelheid, park enzovoort hebben. Automatisch. |
 | `fotos/` | Je eigen foto's. |
 | `index.html` | De startpagina met jouw teller, kaart, de ranglijst van vrienden en de zoeklijst. |
 | `profiel.html` | Het profiel van een vriend: `profiel.html?wie=gebruikersnaam`. |
 | `vergelijk.html` | Twee mensen vergelijken: `vergelijk.html?a=ruben&b=anna`. |
 | `assets/delen.png` | Het plaatje dat WhatsApp en andere apps tonen als je een link deelt. |
 | `achtbaan.html` | De attractiepagina. Toont elke achtbaan via `achtbaan.html?id=…`. |
+| `park.html` | De pagina van een park: `park.html?id=…`, met alle achtbanen (open en gesloten apart), hoeveel je er gereden hebt en een kaart. |
+| `landen.html` | Per land hoeveel achtbanen er zijn en hoeveel je er gereden hebt. |
+| `ontbrekend.html` | Beheer: je credits waar nog iets aan ontbreekt, en het kwaliteitsrapport. |
 | `beheer.html` | Het beheerpaneel. Staat niet in het menu; alleen voor jou. |
 | `account.html` | Inloggen met een link per mail, je profiel, uitloggen en je account verwijderen. |
 | `privacy.html` | In gewone taal: wat er bewaard wordt, wie het kan zien en hoe je alles verwijdert. |
@@ -27,7 +32,11 @@ Alle achtbanen van de wereld op één site, met een teller van de achtbanen die 
 | `supabase/test_beveiliging.sql` | Test of niemand bij de gegevens van een ander kan. Draai je in Supabase. |
 | `supabase/mails/` | Nederlandse teksten voor de inlogmail en de uitnodiging. |
 | `assets/vendor/supabase.js` | De officiële Supabase-bibliotheek (versie 2.118.0, MIT-licentie). Staat in de repository, zodat de site geen andere server nodig heeft. |
-| `scripts/haal_achtbanen.py` | Haalt de achtbanen op bij Wikidata en OpenStreetMap, en zoekt foto's. |
+| `scripts/haal_achtbanen.py` | Haalt de achtbanen op bij Wikidata, Wikipedia en OpenStreetMap, en zoekt foto's. |
+| `scripts/wikipedia.py` | Leest het informatieblok van een Wikipedia-artikel (Engels, Nederlands en Duits). |
+| `scripts/normaliseer.py` | Maakt namen, landen, types en fabrikanten gelijk, en filtert onmogelijke waarden. |
+| `scripts/rapport.py` | Maakt het kwaliteitsrapport. |
+| `scripts/test_gegevens.py` | Tests voor het lezen en gelijk maken van de gegevens. GitHub draait ze voor elke run. |
 | `scripts/reservekopie.py` | Controleert Supabase, maakt een reservekopie en kan hem terugzetten. |
 | `.github/workflows/site.yml` | Laat GitHub de lijst ophalen en de site publiceren. |
 | `.github/workflows/reservekopie.yml` | Kijkt elke dag of Supabase werkt en maakt elke maandag een versleutelde reservekopie. |
@@ -117,6 +126,18 @@ Zolang jouw account nog geen ritten heeft, toont de startpagina gewoon je credit
 - **Afvinken** in het overzicht van je eigen lijst (zie *Afvinkmodus* hieronder).
 
 Wat je opslaat staat meteen op de site, voor iedereen. Op de pagina van een achtbaan zie je, als je bent ingelogd, je eigen rit. Bezoekers zonder account zien jouw rit, zoals altijd.
+
+## Zoeken en filteren
+
+In **Alle achtbanen** filter je op land, park, fabrikant, type, status, gereden of nog niet (ook per vriend: *Gereden door* of *Nog niet gereden door*), hoogte van-tot, snelheid van-tot, openingsjaar van-tot, met of zonder inversies, en met of zonder foto. Alles is te combineren. Wat aan staat zie je als chips: tik op een chip om dat filter weg te halen, of op **Alles wissen**.
+
+- **Delen**: alle filters staan in het adres. Kopieer de link en een vriend ziet precies dezelfde lijst.
+- **Weergave**: kaartjes, een compacte lijst, of een tabel. In de tabel sorteer je door op een kolomkop te tikken (nog een keer: andersom).
+- **Zoeken** vindt ook parken, fabrikanten en landen, met suggesties terwijl je typt. Hoofdletters en accenten maken niet uit.
+- **Op je telefoon** zitten de filters onder de knop **Filters**.
+- Wil je geen alpine coasters zien: kies bij Type een ander type, of zoek in de tabel. Ze hebben het type *Alpine coaster*.
+- **Parkpagina**: tik op de naam van een park. Je ziet alle achtbanen, open en gesloten apart, hoeveel je er gereden hebt, en een kaart.
+- **Landen** (in het menu): per land hoeveel achtbanen er zijn en hoeveel je er gereden hebt.
 
 ## Delen en vergelijken
 
@@ -211,6 +232,8 @@ Goed om te weten: alle GitHub Pages-sites van één account delen hetzelfde adre
 
 - **Achtbaan ontbreekt**: een achtbaan toevoegen aan `data/extra.json`.
 - **Eigen foto** bij een achtbaan, rechtstreeks vanaf je telefoon (zie *Eigen foto's*).
+- **Gegevens aanvullen**, onderaan de pagina van een baan: hoogte, snelheid, type, fabrikant en meer, altijd met een bron (zie *Gegevens aanvullen*).
+- **Ontbrekende gegevens** (`ontbrekend.html`): je credits waar nog iets aan ontbreekt, op een rij, om meteen aan te vullen.
 - **Splitsen in losse sporen** en **Verbergen**, onderaan de pagina van een baan (zie hieronder).
 - Zonder Supabase ook: **Zet op mijn lijst**, **Bewerken**, **Verwijderen** en **Afvinken** voor je ritten in `gereden.json`.
 
@@ -246,9 +269,19 @@ Zelf splitsen: open de baan en kies onderaan **Splitsen in losse sporen**. Geef 
 
 Ongedaan maken: haal de regel weg uit `data/splitsen.json`.
 
+## Gegevens aanvullen
+
+Klopt er iets niet, of ontbreekt er iets? Met beheer: open de baan en kies onderaan **Gegevens aanvullen**, of ga naar **Ontbrekende gegevens** op de beheerpagina. Vul in wat je weet en schrijf erbij waar het vandaan komt (bijvoorbeeld *bordje bij de ingang, 2025* of de site van het park). Zonder bron kun je niet opslaan. Je aanvulling komt in `data/aanvullingen.json` en gaat voor op Wikidata, Wikipedia en OpenStreetMap. Op de pagina van de baan staat dan klein *Eigen aanvulling* met je bron. **Aanvulling weghalen** zet de gegevens uit de bronnen terug.
+
+Met de hand kan ook:
+
+```json
+{ "id": "Q888394", "hoogte": 12.5, "type": "Bobsleebaan", "bron": "Bordje bij de ingang, 2025" },
+```
+
 ## Wat geen achtbaan is
 
-OpenStreetMap noemt soms ook andere dingen een achtbaan. Het script laat bij banen die alleen in OpenStreetMap staan dit weg: losse stations, zomerrodelbanen en alpine coasters, waterattracties en andere attracties (darkrides, treintjes, speelplaatsen), dingen waarvan de Wikidata-koppeling zegt dat het geen achtbaan is, en banen buiten een pretpark zonder RCDB-nummer. VR-versies, zoals EuroSat Coastiality, horen bij de echte baan: een rit erop telt voor die baan.
+OpenStreetMap noemt soms ook andere dingen een achtbaan. Het script laat bij banen die alleen in OpenStreetMap staan dit weg: losse stations, waterattracties en andere attracties (darkrides, treintjes, speelplaatsen), dingen waarvan de Wikidata-koppeling zegt dat het geen achtbaan is, en banen buiten een pretpark zonder RCDB-nummer. Alpine coasters (zomerrodelbanen op rails) blijven wel staan, met het type *Alpine coaster*, zodat je ze met een filter kunt weglaten. VR-versies, zoals EuroSat Coastiality, horen bij de echte baan: een rit erop telt voor die baan.
 
 Staat er nog iets tussen wat geen achtbaan is, of dubbel staat: open het en kies onderaan **Verbergen**. Het komt dan in `data/verborgen.json` en verdwijnt van de site. Terugzetten kan op de beheerpagina. Een baan die iemand gereden heeft (jij of een vriend) kun je niet verbergen.
 
@@ -270,14 +303,18 @@ Alleen met beheer. Open een achtbaan en kies onderaan bij **Beheer** **Kies een 
 
 ## Lijst nu meteen bijwerken
 
-Het script draait elke eerste dag van de maand. Wil je niet wachten: ga naar **Actions**, kies **Site bouwen en publiceren** en klik op **Run workflow**. Onder de run staat een samenvatting met aantallen: hoeveel uit Wikidata, hoeveel extra uit OpenStreetMap, hoeveel dubbelen weggehaald en hoeveel met foto.
+Het script draait elke eerste dag van de maand. Wil je niet wachten: ga naar **Actions**, kies **Site bouwen en publiceren** en klik op **Run workflow**. Onder de run staat het **kwaliteitsrapport**: hoeveel procent van de achtbanen een foto, park, hoogte, snelheid, openingsjaar enzovoort heeft, wat dat de vorige keer was, waar de foto's vandaan komen, en wat er misging (bijvoorbeeld als OpenStreetMap niet bereikbaar was). Hetzelfde rapport staat in `data/rapport.json` en op **Ontbrekende gegevens**.
 
 ## Hoe het script werkt
 
 1. **Wikidata**: alle achtbanen met naam, park, land, cijfers en foto. Het script probeert Wikidata v2, dan v1, dan QLever.
 2. **OpenStreetMap**: één grote vraag aan de Overpass API voor alle objecten met `attraction=roller_coaster`, plus de parkgebieden (`tourism=theme_park`). Met een nette User-Agent, twee reserve-servers, en opnieuw proberen bij drukte. Alles samen hooguit 25 minuten; daarna blijven de OSM-gegevens van de vorige keer staan.
 3. **Samenvoegen**: een OSM-object hoort bij een Wikidata-achtbaan via de `wikidata`-tag, of op naam plus afstand: 300 meter, of 1,5 km als de naam precies gelijk is (Wikidata zet een baan vaak midden in het park). Het park komt uit het omringende parkgebied; liggen er gebieden in elkaar, dan gaat het gebied met een Wikidata-koppeling voor. Meerdere OSM-objecten van één achtbaan (spoor en station) worden één. Achtbanen die alleen in OSM staan krijgen een vaste code zoals `osm-way-123`.
-4. **Foto's**, in deze volgorde: Wikidata P18, een geschikte foto uit de Commons-categorie (P373), de vrij gelicenseerde hoofdafbeelding van het Wikipedia-artikel, de `image`- of `wikimedia_commons`-tag uit OSM, en als laatste een foto op Commons met de naam van de baan én van het park in de bestandsnaam. Elke foto wordt bij Commons gecontroleerd: hij moet er echt staan, met een vrije licentie. Alleen de bestandsnaam wordt bewaard; de site toont bij elke foto de maker en de licentie.
+4. **Wikipedia**: het informatieblok van het artikel in het Engels, Nederlands en Duits (hoogte, valhoogte, lengte, topsnelheid, inversies, ritduur, fabrikant, model, type, opening, sluiting en status). Per 50 artikelen tegelijk, met een pauze ertussen. Alles wordt omgerekend naar meter en km/u; onmogelijke waarden (een baan van 900 meter hoog) vallen weg.
+5. **Kiezen per gegeven**: je eigen aanvulling gaat voor, dan Wikidata, dan Wikipedia, dan OpenStreetMap. Van elk gegeven wordt de bron bewaard; de attractiepagina toont die klein onder het gegeven.
+6. **Gelijk maken**: namen (zonder "(roller coaster)" erachter), landen in het Nederlands, één schrijfwijze per fabrikant en per type. Dubbele banen en dubbele parken worden samengevoegd (oude codes blijven werken). Een baan zonder land krijgt het land van zijn park, of van de banen in de buurt als die allemaal in hetzelfde land staan. Verhuisde banen krijgen *Eerder in ...* met de jaren.
+7. **Foto's**, in deze volgorde: je eigen foto, Wikidata P18, de Commons-categorie (P373), de hoofdafbeelding van het Wikipedia-artikel, de `image`- of `wikimedia_commons`-tag uit OSM, en als laatste zoeken op Commons, alleen als het zeker om deze baan gaat (de naam in de bestandsnaam, en het park of een cameraplek binnen een kilometer). Elke foto wordt bij Commons gecontroleerd: hij moet er echt staan, met een vrije licentie. Een liggende foto van de baan zelf gaat voor; logo's, plattegronden, borden, ingangen en winkels worden overgeslagen, en een staande foto, een bouwfoto of een foto van het station alleen als er niets beters is. De maker en de licentie gaan mee, zodat de site ze bij elke foto kan tonen. Is er geen vrije foto, dan toont de site een getekende illustratie die past bij het type en de hoogte (met een looping per inversie). Dat is duidelijk een tekening, geen foto.
+8. **Rapport**: het kwaliteitsrapport komt in `data/rapport.json` en in de samenvatting van de run.
 
 Wil je zien wat het script heeft weggelaten en waarom, draai het dan met `ACHTBANEN_UITLEG=1 python3 scripts/haal_achtbanen.py`.
 
@@ -291,8 +328,10 @@ Beveiligingen:
 ## Bronnen en licenties
 
 - **Wikidata**: vrij te gebruiken (CC0).
-- **OpenStreetMap**: © OpenStreetMap-bijdragers, onder de [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/1-0/). Omdat `data/achtbanen.json` (en `data/details.json`, als die er is) gegevens uit OpenStreetMap bevat, valt dat bestand onder de ODbL. Wie het bestand hergebruikt, moet OpenStreetMap noemen en het onder dezelfde licentie delen.
-- **Foto's**: van Wikimedia Commons, alleen met een vrije licentie; maker en licentie staan bij elke foto.
-- **Teksten** op de attractiepagina: Wikipedia (CC BY-SA).
+- **OpenStreetMap**: © OpenStreetMap-bijdragers, onder de [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/1-0/). Omdat `data/achtbanen.json` en de bestanden in `data/details/` gegevens uit OpenStreetMap bevatten, vallen ze onder de ODbL. Wie ze hergebruikt, moet OpenStreetMap noemen en ze onder dezelfde licentie delen.
+- **Wikipedia**: gegevens uit de informatieblokken van Wikipedia (Engels, Nederlands en Duits) en de teksten op de attractiepagina vallen onder [CC BY-SA](https://creativecommons.org/licenses/by-sa/4.0/deed.nl). Op de attractiepagina staat bij elk gegeven uit Wikipedia klein uit welk artikel het komt, met een link, en onderaan de lijst *Waar de gegevens vandaan komen*.
+- **Foto's**: van Wikimedia Commons, alleen met een vrije licentie (de licentie verschilt per foto). Maker en licentie staan bij elke foto, ook op de kaartjes, met een link naar de pagina van de foto op Commons.
+- **Getekende illustraties**: maakt de site zelf, voor banen zonder vrije foto.
+- **Je eigen aanvullingen** (`data/aanvullingen.json`): met de bron die je zelf opgeeft.
 - **Kaarten**: © OpenStreetMap.
 - **RCDB**: er worden geen gegevens of foto's van rcdb.com overgenomen (auteursrecht en databankenrecht). Alleen een link naar de RCDB-pagina, als het nummer in Wikidata of OpenStreetMap staat.

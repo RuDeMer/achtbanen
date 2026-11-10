@@ -83,6 +83,134 @@
     if (anders) anders(); else img.remove();
   }
 
+  /* ---------- Getekende illustratie (als er geen vrije foto is) ----------
+     In de stijl van de baan op de startpagina: rails, bielzen, steunen en een treintje.
+     De vorm past bij het type en de hoogte, met een looping per inversie (hooguit drie).
+     Het is duidelijk een tekening, geen nepfoto. Elke baan krijgt door zijn code een
+     eigen variatie, die bij elk bezoek hetzelfde is. */
+  function illustratie(a, B = 400, H = 300) {
+    let zaad = [...String(a.id)].reduce((s, c) => (s * 31 + c.charCodeAt(0)) >>> 0, 7);
+    const toeval = () => ((zaad = (zaad * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const t = a.type || "Achtbaan";
+    const grond = H * 0.86, plafond = H * 0.14;
+    const schattingen = { Kinderachtbaan: 6, Familieachtbaan: 12, "Wilde muis": 14, Hypercoaster: 70, Lanceerachtbaan: 40, Boomerang: 35 };
+    const hoogte = a.hoogte || schattingen[t] || 25;
+    const f = Math.max(0.2, Math.min(1, Math.sqrt(hoogte / 90)));
+    const piek = grond - (grond - plafond) * f;
+    const laag = grond - 6;
+    const loopType = /Omgekeerde|4D|Boomerang|Vliegende/.test(t);
+    let lussen = Math.min(3, a.inversies != null ? a.inversies : loopType ? 1 : 0);
+    const p = []; // punten van de baan
+    const lus = (cx, cy, r) => { for (let i = 0; i <= 16; i++) { const h = (i / 16) * Math.PI * 2; p.push([cx + r * Math.sin(h) + (i / 16) * r * 0.7, cy + r * Math.cos(h)]); } };
+    const heuvels = (x0, x1, n, y0) => {
+      for (let i = 1; i <= n; i++) {
+        const x = x0 + ((x1 - x0) * (i - 0.5)) / n;
+        const y = y0 + (laag - y0) * (0.25 + toeval() * 0.4);
+        p.push([x, y], [x0 + ((x1 - x0) * i) / n, laag - 4 - toeval() * 10]);
+      }
+    };
+    // Loopings worden kleiner als ze anders niet passen
+    const ruimte = (x0, x1, n, r0) => (n ? Math.min(r0, ((x1 - x0) / n - 6) / 1.9) : r0);
+    let r = Math.min(H * 0.17, (grond - piek) * 0.45 + 14);
+    let trein = 2; // op welk stuk van de baan het treintje rijdt (standaard de optakeling)
+
+    if (t === "Alpine coaster") {
+      p.push([0, H * 0.3]);
+      for (let i = 1; i <= 7; i++) p.push([(B * i) / 7, H * 0.3 + (grond - 8 - H * 0.3) * (i / 7) + (i % 2 ? -12 : 10)]);
+    } else if (t === "Wilde muis") {
+      // Van opzij: optakeling en dan trapsgewijs omlaag, met een kort stukje vlak na elke bocht
+      p.push([0, laag], [B * 0.08, laag], [B * 0.28, piek], [B * 0.31, piek - 1]);
+      const treden = 4, stap = (laag - piek) / treden;
+      for (let i = 0; i < treden; i++) {
+        const x0 = B * (0.33 + i * 0.16), y = piek + i * stap;
+        p.push([x0 + B * 0.07, y], [x0 + B * 0.1, y + stap * 0.5], [x0 + B * 0.13, y + stap]);
+      }
+      p.push([B, laag]);
+    } else if (t === "Boomerang" || t === "Shuttleachtbaan") {
+      p.push([B * 0.04, plafond + 4], [B * 0.12, laag - 10], [B * 0.25, laag]);
+      r = ruimte(B * 0.3, B * 0.7, 1, r);
+      lus(B * 0.42, laag - r, r);
+      p.push([B * 0.75, laag], [B * 0.92, laag - 20], [B * 0.98, plafond + 10]);
+      trein = 1;
+    } else if (t === "Lanceerachtbaan") {
+      p.push([0, laag], [B * 0.3, laag], [B * 0.4, piek + 6], [B * 0.46, piek], [B * 0.52, piek + 6], [B * 0.6, laag - 6]);
+      r = ruimte(B * 0.62, B * 0.94, lussen, r * 0.8);
+      let x = B * 0.62 + r;
+      for (let i = 0; i < lussen; i++) { lus(x, laag - r - 2, r); x += r * 1.9 + 6; }
+      if (x - r < B * 0.86) heuvels(x - r, B, 1, piek + (laag - piek) * 0.4);
+      else p.push([B, laag]);
+      trein = 1;
+    } else {
+      // Gewone baan: optakeling, eerste afdaling, heuvels en loopings (elke baan net iets anders)
+      const top = B * (0.26 + toeval() * 0.1), voet = B * (0.04 + toeval() * 0.08);
+      const dal = top + B * (0.11 + toeval() * 0.04);
+      p.push([0, laag], [voet, laag], [top, piek], [top + B * 0.04, piek + 2], [dal, laag - 4]);
+      r = ruimte(dal + B * 0.03, B * 0.94, lussen, r);
+      let x = dal + B * 0.03 + r * 0.8;
+      for (let i = 0; i < lussen; i++) { lus(x, laag - r - 2, r); x += r * 1.9 + 6; }
+      const x0 = x - r * 0.8;
+      if (x0 < B * 0.84) heuvels(x0, B * 0.96, Math.max(1, Math.round((B * 0.96 - x0) / (B * (0.12 + toeval() * 0.1)))), piek + (laag - piek) * (0.2 + toeval() * 0.3));
+      p.push([B, laag]);
+    }
+
+    // Vloeiende lijn door de punten (Catmull-Rom als Bézier)
+    const stukken = p.slice(1).map((q, j) => {
+      const i = j + 1, p0 = p[i - 2] || p[i - 1], p1 = p[i - 1], p3 = p[i + 1] || q;
+      return [p1, [p1[0] + (q[0] - p0[0]) / 6, p1[1] + (q[1] - p0[1]) / 6], [q[0] - (p3[0] - p1[0]) / 6, q[1] - (p3[1] - p1[1]) / 6], q];
+    });
+    const d = `M${p[0][0].toFixed(1)},${p[0][1].toFixed(1)} ` + stukken.map(([, c1, c2, q]) =>
+      `C${c1[0].toFixed(1)},${c1[1].toFixed(1)} ${c2[0].toFixed(1)},${c2[1].toFixed(1)} ${q[0].toFixed(1)},${q[1].toFixed(1)}`).join(" ");
+
+    // Steunen: van het laagste punt van de baan recht naar beneden (bij hout: met kruisen)
+    const houten = t === "Houten achtbaan";
+    const steunen = [];
+    for (let x = 10; x < B; x += houten ? 16 : 22) {
+      const ys = p.filter((q, i) => i && Math.min(p[i - 1][0], q[0]) <= x && Math.max(p[i - 1][0], q[0]) >= x).map((q) => q[1]);
+      if (!ys.length) continue;
+      const y = Math.max(...ys);
+      if (grond - y > 10) steunen.push([x, y]);
+    }
+    let lijnen = steunen.map(([x, y]) => `<line x1="${x}" y1="${(y + 5).toFixed(1)}" x2="${x}" y2="${grond}"/>`).join("");
+    if (houten) {
+      lijnen += steunen.slice(1).map(([x, y], i) => {
+        const [x0, y0] = steunen[i], top = (Math.max(y, y0) + 8).toFixed(1);
+        return x - x0 < 20 && grond - top > 12 ? `<line class="kruis" x1="${x0}" y1="${grond}" x2="${x}" y2="${top}"/><line class="kruis" x1="${x0}" y1="${top}" x2="${x}" y2="${grond}"/>` : "";
+      }).join("");
+    }
+
+    // Het treintje: drie wagentjes achter elkaar op de baan (bij hangende banen eronder)
+    const opStuk = ([a0, c1, c2, a1], u) => {
+      const v = 1 - u;
+      const punt = (k) => v * v * v * a0[k] + 3 * v * v * u * c1[k] + 3 * v * u * u * c2[k] + u * u * u * a1[k];
+      const raak = (k) => 3 * v * v * (c1[k] - a0[k]) + 6 * v * u * (c2[k] - c1[k]) + 3 * u * u * (a1[k] - c2[k]);
+      return [punt(0), punt(1), Math.atan2(raak(1), raak(0)) * 180 / Math.PI];
+    };
+    const stuk = stukken[Math.min(trein, stukken.length) - 1];
+    const lengte = Math.hypot(stuk[3][0] - stuk[0][0], stuk[3][1] - stuk[0][1]) || 1;
+    const hangend = /Omgekeerde|Hangende|Vliegende/.test(t);
+    const wagens = [0, 1, 2].map((i) => {
+      const [x, y, hoek] = opStuk(stuk, Math.max(0.05, 0.8 - (i * 21) / lengte));
+      return `<rect x="-9" y="${hangend ? 3 : -13}" width="18" height="9" rx="2.5" transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${hoek.toFixed(1)})"/>`;
+    }).join("");
+    const water = t === "Waterachtbaan" ? `<rect class="ill-water" x="0" y="${grond - 4}" width="${B}" height="${H - grond + 4}"/>` : "";
+    const berg = t === "Alpine coaster" ? `<path class="ill-berg" d="M0,${H} L0,${H * 0.26} L${B * 0.35},${H * 0.12} L${B},${H * 0.62} L${B},${H} Z"/>` : "";
+    const soort = a.status === "gesloten" ? " is-dicht" : a.status === "gepland" ? " is-gepland" : "";
+    const spiegel = toeval() < 0.5 && t !== "Alpine coaster" ? ` transform="translate(${B} 0) scale(-1 1)"` : "";
+    return `<svg class="ill${soort}" viewBox="0 0 ${B} ${H}" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Getekende illustratie: ${esc(t.toLowerCase())}">
+      <g${spiegel}>${berg}${water}<g class="ill-steunen">${lijnen}</g>
+      <line class="ill-grond" x1="0" y1="${grond}" x2="${B}" y2="${grond}"/>
+      <path class="ill-bielzen" d="${d}"/><path class="ill-rails" d="${d}"/><path class="ill-gat" d="${d}"/>
+      <g class="ill-trein">${wagens}</g></g></svg>`;
+  }
+
+  // Maker en licentie van een foto van Commons, in één korte regel
+  const fotoCredit = (a) => (a.fotoInfo ? [a.fotoInfo.maker, a.fotoInfo.licentie].filter(Boolean).join(" · ") : "");
+  const commonsBijschrift = (foto, info) => {
+    const delen = info ? [info.maker || (info.licentie ? "onbekende maker" : ""), info.licentie].filter(Boolean) : [];
+    return `Foto: ${delen.length ? `${esc(delen.join(", "))}, via ` : ""}<a href="${commonsPagina(foto)}">Wikimedia Commons</a>`;
+  };
+  const TEKENING_UITLEG = 'Getekende illustratie: er is nog geen vrije foto van deze achtbaan. Heb je er een gemaakt? <a href="https://commons.wikimedia.org/wiki/Special:UploadWizard">Zet hem op Wikimedia Commons</a>.';
+
   function statusTekst(a) {
     if (a.status === "gesloten") return a.gesloten ? `Gesloten in ${a.gesloten}` : "Gesloten";
     if (a.status === "gepland") return a.geopend ? `Opent in ${a.geopend}` : "Komt nog";
@@ -393,13 +521,14 @@
   let geladen = null;
   function laadAlles() {
     geladen = geladen || (async () => {
-      const [basis, extra, mijn, splitsBestand, verborgenBestand, fotoBestand] = await Promise.all([
+      const [basis, extra, mijn, splitsBestand, verborgenBestand, fotoBestand, aanvulBestand] = await Promise.all([
         haalJson("data/achtbanen.json", true),
         laadEigen("data/extra.json"),
         laadEigen("data/gereden.json"),
         laadEigen("data/splitsen.json"),
         laadEigen("data/verborgen.json"),
         laadEigen("data/fotos.json"),
+        laadEigen("data/aanvullingen.json"),
       ]);
       // Verwijzingen: oude ids (bijvoorbeeld een OSM-baan die nu in Wikidata staat, of een
       // regel uit extra.json die nu in de bronnen staat) wijzen naar de achtbaan van nu
@@ -433,10 +562,16 @@
       const perId = new Map(lijst.map((a) => [a.id, a]));
       for (const [id, sporen] of sporenVan) if (!perId.has(id) && perId.has(sporen[0].id)) perId.set(id, sporen[0]);
       for (const [oud, nieuw] of Object.entries(aliassen)) if (!perId.has(oud) && perId.has(nieuw)) perId.set(oud, perId.get(nieuw));
+      // Je eigen aanvullingen (data/aanvullingen.json) gaan voor op alle bronnen
+      const aanvullingen = new Map(((aanvulBestand && aanvulBestand.aanvullingen) || []).filter((x) => x && x.id).map((x) => [x.id, x]));
+      const doelVan = (id) => sporenVan.get(id) || [perId.get(id) || verborgenBanen.get(id)].filter(Boolean);
+      for (const [id, x] of aanvullingen) for (const a of doelVan(id)) zetAanvulling(a, x);
       for (const a of lijst) a._zoek = zoekbaar([a.naam, a.heleNaam, a.park, a.land, a.fabrikant, a.type].join(" "));
       const data = {
         lijst, perId, aliassen, sporenVan, verborgen, verborgenBanen, echteIds: new Set(lijst.map((a) => a.id)),
         voorstellen: basis.splitsvoorstellen || {},
+        aanvullingen, aanvulDoel: doelVan,
+        parkAliassen: basis.parkAliassen || {},
         bijgewerkt: basis.bijgewerkt, details: basis.details, extra: (extra && extra.achtbanen) || [],
         // Je credits uit gereden.json: zonder Supabase de echte lijst, met Supabase de reservekopie
         jsonRitten: ((mijn && mijn.gereden) || []).filter((r) => r && r.id),
@@ -491,6 +626,74 @@
     data.jsonRitten = nieuw.gereden;
     if (data.persoon) data.persoon.ritten = nieuw.gereden;
     zetRitten(data, nieuw.gereden);
+  }
+
+  /* ---------- Je eigen aanvullingen (data/aanvullingen.json) ----------
+     Per achtbaan een regel met de velden die je zelf aanvult of verbetert, en een
+     'bron'. Ze gaan voor op Wikidata, Wikipedia en OpenStreetMap. */
+  const TYPES = ["4D-achtbaan", "Aangedreven achtbaan", "Achtbaan", "Alpine coaster", "Bobsleebaan", "Boomerang",
+    "Draaiende achtbaan", "Duikachtbaan", "Familieachtbaan", "Hangende achtbaan", "Houten achtbaan", "Hybride achtbaan",
+    "Hypercoaster", "Indoorachtbaan", "Kinderachtbaan", "Lanceerachtbaan", "Mijntreinachtbaan", "Motorachtbaan",
+    "Omgekeerde achtbaan", "Race-achtbaan", "Shuttleachtbaan", "Single-rail-achtbaan", "Stalen achtbaan",
+    "Staande achtbaan", "Vliegende achtbaan", "Vloerloze achtbaan", "Waterachtbaan", "Wilde muis", "Wing coaster"];
+  // Zelfde grenzen als in het script (scripts/normaliseer.py)
+  const AANVUL_VELDEN = [
+    { veld: "hoogte", label: "Hoogte (m)", soort: "getal", min: 1, max: 200, dec: 1 },
+    { veld: "valhoogte", label: "Valhoogte (m)", soort: "getal", min: 1, max: 200, dec: 1 },
+    { veld: "lengte", label: "Lengte (m)", soort: "getal", min: 10, max: 5000, dec: 0 },
+    { veld: "snelheid", label: "Topsnelheid (km/u)", soort: "getal", min: 5, max: 260, dec: 0 },
+    { veld: "inversies", label: "Inversies", soort: "getal", min: 0, max: 14, dec: 0 },
+    { veld: "duur", label: "Ritduur (seconden)", soort: "getal", min: 10, max: 900, dec: 0 },
+    { veld: "geopend", label: "Geopend (jaar)", soort: "jaar" },
+    { veld: "gesloten", label: "Gesloten (jaar)", soort: "jaar" },
+    { veld: "status", label: "Status", soort: "keuze", opties: [["open", "Open"], ["gesloten", "Gesloten"], ["gepland", "Komt nog"]] },
+    { veld: "type", label: "Type", soort: "keuze", opties: TYPES.map((t) => [t, t]) },
+    { veld: "fabrikant", label: "Fabrikant", soort: "tekst", max: 60, lijst: "fabrikant" },
+    { veld: "model", label: "Model", soort: "tekst", max: 80 },
+    { veld: "park", label: "Park", soort: "tekst", max: 100, lijst: "park" },
+    { veld: "land", label: "Land", soort: "tekst", max: 60, lijst: "land" },
+  ];
+
+  function zetAanvulling(a, x) {
+    a._origineel = a._origineel || { bron: { ...(a.bron || {}) } };
+    a.bron = { ...(a.bron || {}) };
+    for (const { veld } of AANVUL_VELDEN) {
+      if (x[veld] === undefined || x[veld] === null || x[veld] === "") continue;
+      if (!(veld in a._origineel)) a._origineel[veld] = a[veld];
+      a[veld] = x[veld];
+      a.bron[veld] = "eigen";
+    }
+    a.eigenBron = x.bron || "";
+    a._eigen = x;
+  }
+  function herstelAanvulling(a) {
+    if (!a._origineel) return;
+    for (const [veld, w] of Object.entries(a._origineel)) {
+      if (veld === "bron") continue;
+      if (w === undefined) delete a[veld]; else a[veld] = w;
+    }
+    a.bron = a._origineel.bron;
+    delete a._origineel; delete a.eigenBron; delete a._eigen;
+  }
+
+  // De details (bronnen, Wikipedia-links, vorige parken, ...) staan in kleine stukken in
+  // data/details/. Het stuk volgt uit de code van de baan (zelfde som als in het script).
+  async function haalDetails(data, a) {
+    const meta = data.details;
+    const sleutel = a.deelVan || a.id;
+    let alles = null;
+    if (meta && typeof meta === "object" && meta.delen) {
+      const deel = [...sleutel].reduce((s, c) => s + c.charCodeAt(0), 0) % meta.delen;
+      alles = await onthoud(`details:${deel}`, () => haalJson(`${meta.map}/${deel}.json`, false));
+    } else if (typeof meta === "string") {
+      alles = await onthoud("details", () => haalJson(meta, false)); // ouder bestand in één stuk
+    }
+    const d = (alles || {})[sleutel];
+    if (!d) return;
+    const eigen = a._eigen;
+    if (eigen) herstelAanvulling(a);
+    Object.assign(a, d);
+    if (eigen) zetAanvulling(a, eigen);
   }
 
   // Je eigen foto's per achtbaan (data/fotos.json, alleen via beheer). Een foto die nog
@@ -860,22 +1063,61 @@
     kaart.fitBounds(grenzen.pad(0.25), { maxZoom: 9 });
   }
 
+  /* ---------- Sorteren ----------
+     Elke kolom kan op en af; banen zonder die waarde staan altijd onderaan. */
   const opNaam = (a, b) => a.naam.localeCompare(b.naam, TAAL);
   const ritSleutel = (a) => (a.rit ? String(a.laatsteDatum || "0") : "");
+  const leeg = (w) => w == null || w === "";
+  const vergelijk = (waarde, tekst, r) => (a, b) => {
+    const x = waarde(a), y = waarde(b);
+    if (leeg(x) || leeg(y)) return leeg(x) - leeg(y) || opNaam(a, b);
+    return r * (tekst ? String(x).localeCompare(String(y), TAAL) : x - y) || opNaam(a, b);
+  };
+  const veldVan = (k) => (a) => a[k];
   const SORTERINGEN = {
     naam: opNaam,
-    nieuw: (a, b) => (b.geopend || 0) - (a.geopend || 0) || opNaam(a, b),
-    oud: (a, b) => (a.geopend || 9999) - (b.geopend || 9999) || opNaam(a, b),
-    hoog: (a, b) => (b.hoogte || 0) - (a.hoogte || 0) || opNaam(a, b),
-    snel: (a, b) => (b.snelheid || 0) - (a.snelheid || 0) || opNaam(a, b),
-    rit: (a, b) => ritSleutel(b).localeCompare(ritSleutel(a)) || opNaam(a, b),
+    "naam-af": (a, b) => opNaam(b, a),
+    park: vergelijk(veldVan("park"), true, 1), "park-af": vergelijk(veldVan("park"), true, -1),
+    land: vergelijk(veldVan("land"), true, 1), "land-af": vergelijk(veldVan("land"), true, -1),
+    type: vergelijk(veldVan("type"), true, 1), "type-af": vergelijk(veldVan("type"), true, -1),
+    fabrikant: vergelijk(veldVan("fabrikant"), true, 1), "fabrikant-af": vergelijk(veldVan("fabrikant"), true, -1),
+    nieuw: vergelijk(veldVan("geopend"), false, -1), oud: vergelijk(veldVan("geopend"), false, 1),
+    hoog: vergelijk(veldVan("hoogte"), false, -1), laag: vergelijk(veldVan("hoogte"), false, 1),
+    snel: vergelijk(veldVan("snelheid"), false, -1), traag: vergelijk(veldVan("snelheid"), false, 1),
+    lang: vergelijk(veldVan("lengte"), false, -1), kort: vergelijk(veldVan("lengte"), false, 1),
+    inv: vergelijk(veldVan("inversies"), false, -1), "inv-op": vergelijk(veldVan("inversies"), false, 1),
+    rit: vergelijk(ritSleutel, true, -1), "rit-op": vergelijk(ritSleutel, true, 1),
   };
+  // In het keuzemenu; een kolom uit de tabel komt er vanzelf bij als je daarop sorteert
+  const SORTEER_MENU = { naam: "Op naam", nieuw: "Nieuwste eerst", oud: "Oudste eerst", hoog: "Hoogste eerst",
+    snel: "Snelste eerst", lang: "Langste eerst", inv: "Meeste inversies", rit: "Laatst gereden" };
+  const SORTEER_EXTRA = { "naam-af": "Naam (Z–A)", park: "Park (A–Z)", "park-af": "Park (Z–A)", land: "Land (A–Z)",
+    "land-af": "Land (Z–A)", type: "Type (A–Z)", "type-af": "Type (Z–A)", fabrikant: "Fabrikant (A–Z)",
+    "fabrikant-af": "Fabrikant (Z–A)", laag: "Laagste eerst", traag: "Langzaamste eerst", kort: "Kortste eerst",
+    "inv-op": "Minste inversies", "rit-op": "Eerst gereden" };
+  const KOLOMMEN = [
+    { k: "naam", kop: "Naam", op: "naam", af: "naam-af" },
+    { k: "park", kop: "Park", op: "park", af: "park-af" },
+    { k: "land", kop: "Land", op: "land", af: "land-af" },
+    { k: "type", kop: "Type", op: "type", af: "type-af" },
+    { k: "fabrikant", kop: "Fabrikant", op: "fabrikant", af: "fabrikant-af" },
+    { k: "geopend", kop: "Open", op: "oud", af: "nieuw", getal: true },
+    { k: "hoogte", kop: "Hoogte", op: "laag", af: "hoog", getal: true },
+    { k: "snelheid", kop: "Snelheid", op: "traag", af: "snel", getal: true },
+    { k: "lengte", kop: "Lengte", op: "kort", af: "lang", getal: true },
+    { k: "inversies", kop: "Inversies", op: "inv-op", af: "inv", getal: true },
+    { k: "rit", kop: "Gereden", op: "rit-op", af: "rit", getal: true },
+  ];
+  const parkPagina = (sleutel) => `park.html?id=${encodeURIComponent(sleutel)}`;
+  const parkSleutel = (a) => a.parkId || a.park || "";
+  const heeftFoto = (a) => !!(a.eigenFoto || a.rit?.foto || a.foto);
 
   function kaartHtml(a, gekozen) {
     const foto = a.eigenFoto || a.rit?.foto || a.foto;
     const src = fotoBron(foto, 500);
     const plek = [a.park, a.land].filter(Boolean).join(", ");
     const eigen = eigenPad(foto);
+    const credit = foto === a.foto && !isEigenFoto(foto) ? fotoCredit(a) : "";
     // Afvinkmodus: het hele kaartje is een vinkje, zodat je snel kunt tikken
     const afvink = !!gekozen;
     const tag = afvink ? "label" : "a";
@@ -885,7 +1127,7 @@
       : "";
     return `
       <${tag} class="${klassen}"${afvink ? "" : ` href="${pagina(a)}"`}>${vinkje}
-        <span class="kaart-foto">${src ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async"${eigen ? ` data-eigen="${esc(eigen)}"` : ""}>` : ""}</span>
+        <span class="kaart-foto" data-id="${esc(a.id)}">${src ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async"${eigen ? ` data-eigen="${esc(eigen)}"` : ""}>${credit ? `<span class="foto-credit">${esc(credit)}</span>` : ""}` : illustratie(a)}</span>
         <span class="kaart-tekst">
           <span class="kaart-naam">${esc(a.naam)}</span>
           ${plek ? `<span class="kaart-plek">${esc(plek)}</span>` : ""}
@@ -895,36 +1137,148 @@
       </${tag}>`;
   }
 
+  /* ---------- Overzicht: zoeken, filters en drie weergaven ----------
+     Alle filters zijn te combineren en staan in het adres, zodat je een gefilterde
+     lijst kunt delen. Op een smal scherm zitten ze in een uitschuifpaneel. */
+  const WEERGAVEN = { kaartjes: 48, lijst: 100, tabel: 100 }; // zoveel per keer
+  const STATUS_NAMEN = { open: "Open", gesloten: "Gesloten", gepland: "Komt nog" };
+  const BEREIKEN = [
+    { k: "hoogte", naam: "Hoogte", eenheid: " m", waarde: (a) => a.hoogte, onbekend: "hoogte" },
+    { k: "snelheid", naam: "Snelheid", eenheid: " km/u", waarde: (a) => a.snelheid, onbekend: "snelheid" },
+    { k: "jaar", naam: "Geopend", eenheid: "", waarde: (a) => a.geopend, onbekend: "openingsjaar", heel: true },
+  ];
+  // "30-60", "30-" of "-60" → [30, 60], [30, null], [null, 60]
+  function leesBereik(tekst) {
+    const m = /^\s*(\d+(?:[.,]\d+)?)?\s*-\s*(\d+(?:[.,]\d+)?)?\s*$/.exec(tekst || "");
+    if (!m || (!m[1] && !m[2])) return null;
+    const n = (x) => (x ? Number(x.replace(",", ".")) : null);
+    return [n(m[1]), n(m[2])];
+  }
+  const bereikTekst = (b) => (b ? `${b[0] ?? ""}-${b[1] ?? ""}` : "");
+  const lijstTekst = (delen) => (delen.length > 1 ? `${delen.slice(0, -1).join(", ")} en ${delen[delen.length - 1]}` : delen[0] || "");
+
+  function rijHtml(a) {
+    const plek = [a.park, a.land].filter(Boolean).join(", ");
+    const feiten = [
+      a.type && a.type !== "Achtbaan" ? a.type : "",
+      a.hoogte ? `${getal(a.hoogte, 1)} m` : "",
+      a.snelheid ? `${getal(a.snelheid)} km/u` : "",
+      a.inversies ? `${a.inversies} ${meervoud(a.inversies, "inversie", "inversies")}` : "",
+      statusTekst(a),
+    ].filter(Boolean).join(" · ");
+    return `<li${a.rit ? ' class="is-gereden"' : ""}><a href="${pagina(a)}">
+      <span class="lw-naam">${esc(a.naam)}</span>
+      ${plek ? `<span class="lw-plek">${esc(plek)}</span>` : ""}
+      <span class="lw-feiten">${esc(feiten)}</span>
+      ${a.rit ? '<span class="lw-rit">✓<span class="sr"> gereden</span></span>' : ""}</a></li>`;
+  }
+
+  function tabelRijHtml(a) {
+    const cel = (w, eenheid = "", dec = 0) => (w == null || w === "" ? "" : `${getal(w, dec)}${eenheid}`);
+    const park = a.park ? `<a href="${parkPagina(parkSleutel(a))}">${esc(a.park)}</a>` : "";
+    const rit = a.rit ? `<span class="vink">✓</span><span class="sr">gereden</span>${a.creditDatum ? ` ${esc(datum(a.creditDatum, true))}` : ""}` : "";
+    return `<tr${a.rit ? ' class="is-gereden"' : ""}>
+      <td class="naam"><a href="${pagina(a)}">${esc(a.naam)}</a>${a.status !== "open" ? ` <span class="tabel-status">${esc(STATUS_NAMEN[a.status] || "")}</span>` : ""}</td>
+      <td>${park}</td><td>${esc(a.land || "")}</td><td>${esc(a.type || "")}</td><td>${esc(a.fabrikant || "")}</td>
+      <td class="getal">${a.geopend || ""}</td><td class="getal">${cel(a.hoogte, " m", 1)}</td>
+      <td class="getal">${cel(a.snelheid, " km/u")}</td><td class="getal">${cel(a.lengte, " m")}</td>
+      <td class="getal">${cel(a.inversies)}</td><td class="rit">${rit}</td></tr>`;
+  }
+
+  function tabelHtml(rijen, sorteer) {
+    const kop = KOLOMMEN.map((c) => {
+      const richting = sorteer === c.op ? "ascending" : sorteer === c.af ? "descending" : "";
+      return `<th scope="col"${richting ? ` aria-sort="${richting}"` : ""}${c.getal ? ' class="getal"' : ""}>
+        <button type="button" data-kolom="${c.k}">${c.kop}<span class="pijl" aria-hidden="true">${richting === "ascending" ? "▲" : richting === "descending" ? "▼" : ""}</span></button></th>`;
+    }).join("");
+    return `<div class="tabel-vak"><table class="tabel">
+      <caption class="sr">Achtbanen. Klik op een kolomkop om te sorteren.</caption>
+      <thead><tr>${kop}</tr></thead><tbody>${rijen.map(tabelRijHtml).join("")}</tbody></table></div>`;
+  }
+
   function startOverzicht(data, naWijziging) {
     const { lijst } = data;
     const el = {
-      zoek: $("#zoek"), land: $("#land"), status: $("#status"), sorteer: $("#sorteer"),
-      gereden: $("#alleen-gereden"), raster: $("#raster"), meer: $("#meer"),
-      tekst: $("#resultaten-tekst"), park: $("#park-filter"), filters: $(".filters"),
-      door: $("#door"), doorVeld: $("#door-veld"),
+      zoek: $("#zoek"), suggesties: $("#suggesties"), sorteer: $("#sorteer"), raster: $("#raster"), meer: $("#meer"),
+      tekst: $("#resultaten-tekst"), chips: $("#chips"), hint: $("#filter-hint"),
+      land: $("#land"), park: $("#park"), fabrikant: $("#fabrikant"), type: $("#type"), status: $("#status"),
+      gereden: $("#gereden"), inversies: $("#inversies"), foto: $("#foto"), door: $("#door"), doorVeld: $("#door-veld"),
+      paneel: $("#filter-paneel"), achter: $("#paneel-achter"), open: $("#filter-open"), dicht: $("#filter-dicht"),
+      aantal: $("#filter-aantal"), paneelToon: $("#paneel-toon"), paneelWis: $("#paneel-wis"),
+      weergave: $(".weergave"), zoekbalk: $(".zoekbalk"),
     };
+    const KEUZES = ["land", "park", "fabrikant", "type", "status", "gereden", "inversies", "foto"];
 
-    const perLand = new Map();
-    for (const a of lijst) if (a.land) perLand.set(a.land, (perLand.get(a.land) || 0) + 1);
-    [...perLand.entries()]
-      .sort((x, y) => x[0].localeCompare(y[0], TAAL))
-      .forEach(([land, n]) => el.land.add(new Option(`${land} (${getal(n)})`, land)));
+    // Keuzelijsten met het aantal achtbanen erachter
+    const tel = (sleutel, naam) => {
+      const m = new Map();
+      for (const a of lijst) {
+        const k = sleutel(a);
+        if (!k) continue;
+        const x = m.get(k) || { naam: naam(a), n: 0, landen: new Map() };
+        x.n++;
+        if (a.land) x.landen.set(a.land, (x.landen.get(a.land) || 0) + 1);
+        m.set(k, x);
+      }
+      return m;
+    };
+    const perLand = tel((a) => a.land, (a) => a.land);
+    const perPark = tel(parkSleutel, (a) => a.park);
+    const perFabrikant = tel((a) => a.fabrikant, (a) => a.fabrikant);
+    const perType = tel((a) => a.type, (a) => a.type);
+    for (const p of perPark.values()) p.land = [...p.landen.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] || "";
+    const opties = (m) => [...m.entries()].sort((x, y) => x[1].naam.localeCompare(y[1].naam, TAAL));
+    for (const [k, x] of opties(perLand)) el.land.add(new Option(`${x.naam} (${getal(x.n)})`, k));
+    for (const [k, x] of opties(perFabrikant)) el.fabrikant.add(new Option(`${x.naam} (${getal(x.n)})`, k));
+    for (const [k, x] of opties(perType)) el.type.add(new Option(`${x.naam} (${getal(x.n)})`, k));
+    const parkNaam = (k) => perPark.get(k)?.naam || k;
 
+    // Parken: alleen die in het gekozen land (het gekozen park blijft altijd staan)
+    function vulParken() {
+      const nu = st.park;
+      el.park.length = 1;
+      for (const [k, x] of opties(perPark)) {
+        if (st.land && x.land !== st.land && k !== nu) continue;
+        el.park.add(new Option(`${x.naam}${st.land ? "" : x.land ? `, ${x.land}` : ""} (${getal(x.n)})`, k));
+      }
+      if (nu && !perPark.has(nu)) el.park.add(new Option(nu, nu));
+      el.park.value = nu;
+    }
+
+    // Beginstand uit het adres (oude links zoals ?gereden=1 en ?sorteer=hoog werken nog)
+    const sorteerUit = (s) => (SORTERINGEN[s] ? s : "naam");
     const st = {
       q: params.get("q") || "",
-      land: params.get("land") || "",
-      status: params.get("status") || "",
-      sorteer: SORTERINGEN[params.get("sorteer")] ? params.get("sorteer") : "naam",
-      gereden: params.get("gereden") === "1",
-      park: params.get("park") || "",
-      door: (params.get("door") || "").toLowerCase(),
-      toon: PER_KEER,
+      land: params.get("land") || "", park: params.get("park") || "", fabrikant: params.get("fabrikant") || "",
+      type: params.get("type") || "", status: params.get("status") || "",
+      gereden: params.get("gereden") === "1" ? "ja" : params.get("gereden") || "",
+      inversies: params.get("inversies") || "", foto: params.get("foto") || "",
+      door: (params.get("door") || params.get("nietdoor") || "").toLowerCase(), doorNiet: !params.get("door") && !!params.get("nietdoor"),
+      hoogte: leesBereik(params.get("hoogte")), snelheid: leesBereik(params.get("snelheid")), jaar: leesBereik(params.get("jaar")),
+      sorteer: sorteerUit(params.get("sorteer")),
+      weergave: WEERGAVEN[params.get("weergave")] ? params.get("weergave") : "kaartjes",
     };
+    st.toon = WEERGAVEN[st.weergave];
+    if (st.park && data.parkAliassen && data.parkAliassen[st.park]) st.park = data.parkAliassen[st.park];
+    for (const k of KEUZES) {
+      if (k === "park") continue;
+      el[k].value = st[k];
+      st[k] = el[k].value; // onbekende waarde uit het adres: weg
+    }
+    vulParken();
     el.zoek.value = st.q;
-    el.land.value = st.land; st.land = el.land.value;
-    el.status.value = st.status; st.status = el.status.value;
-    el.sorteer.value = st.sorteer;
-    el.gereden.checked = st.gereden;
+    for (const b of BEREIKEN) {
+      $(`#${b.k}-van`).value = st[b.k]?.[0] ?? "";
+      $(`#${b.k}-tot`).value = st[b.k]?.[1] ?? "";
+    }
+
+    function vulSorteer() {
+      el.sorteer.length = 0;
+      for (const [k, naam] of Object.entries(SORTEER_MENU)) el.sorteer.add(new Option(naam, k));
+      if (!SORTEER_MENU[st.sorteer]) el.sorteer.add(new Option(SORTEER_EXTRA[st.sorteer], st.sorteer));
+      el.sorteer.value = st.sorteer;
+    }
+    vulSorteer();
 
     let resultaat = [];
 
@@ -932,24 +1286,19 @@
       const u = new URLSearchParams();
       if (params.get("wie")) u.set("wie", params.get("wie")); // profielpagina: wie blijft staan
       if (st.q) u.set("q", st.q);
-      if (st.land) u.set("land", st.land);
-      if (st.status) u.set("status", st.status);
+      for (const k of KEUZES) if (st[k]) u.set(k, st[k]);
+      if (st.door) u.set(st.doorNiet ? "nietdoor" : "door", st.door);
+      for (const b of BEREIKEN) if (st[b.k]) u.set(b.k, bereikTekst(st[b.k]));
       if (st.sorteer !== "naam") u.set("sorteer", st.sorteer);
-      if (st.gereden) u.set("gereden", "1");
-      if (st.park) u.set("park", st.park);
-      if (st.door) u.set("door", st.door);
+      if (st.weergave !== "kaartjes") u.set("weergave", st.weergave);
       const qs = u.toString();
       history.replaceState(null, "", location.pathname + (qs ? `?${qs}` : "") + location.hash);
     }
 
-    function parkNaam() {
-      const a = lijst.find((x) => x.parkId === st.park || x.park === st.park);
-      return a ? a.park : st.park;
-    }
-
-    // Filter "Gereden door …": de banen van één vriend (jezelf: zoals je lijst nu is)
+    // Filter op een vriend: de banen die hij of zij wel (of juist niet) gereden heeft
     let perPersoon = null;
     const doorProfiel = () => (perPersoon ? [...perPersoon.values()].find((x) => x.profiel.gebruikersnaam === st.door) : null);
+    const doorNaam = () => doorProfiel()?.profiel.weergavenaam || st.door;
     function doorBanen() {
       if (!st.door) return null;
       if (data.persoon && data.persoon.profiel && data.persoon.profiel.gebruikersnaam === st.door) return new Set(data.gereden);
@@ -958,45 +1307,101 @@
     }
     if (sbAan && el.door) {
       el.doorVeld.hidden = false;
-      el.filters.classList.add("met-door");
       laadIedereen().then((iedereen) => {
         perPersoon = banenPerPersoon(data, iedereen);
         const mensen = iedereen.profielen
           .filter((p) => p.in_ranglijst || (ik && ik.id === p.id) || p.gebruikersnaam === st.door)
           .sort(opWeergavenaam);
-        for (const p of mensen) el.door.add(new Option(ik && ik.id === p.id ? `${p.weergavenaam} (ik)` : p.weergavenaam, p.gebruikersnaam));
-        el.door.value = st.door;
-        if (st.door) { st.door = el.door.value; bereken(); toon(false); }
-      }).catch((e) => { console.warn(e); el.doorVeld.hidden = true; el.filters.classList.remove("met-door"); });
-      el.door.addEventListener("change", () => { st.door = el.door.value; ververs(); });
+        const naam = (p) => (ik && ik.id === p.id ? `${p.weergavenaam} (ik)` : p.weergavenaam);
+        const wel = document.createElement("optgroup"), niet = document.createElement("optgroup");
+        wel.label = "Gereden door"; niet.label = "Nog niet gereden door";
+        for (const p of mensen) {
+          wel.append(new Option(naam(p), p.gebruikersnaam));
+          niet.append(new Option(naam(p), `niet:${p.gebruikersnaam}`));
+        }
+        el.door.append(wel, niet);
+        el.door.value = st.door ? `${st.doorNiet ? "niet:" : ""}${st.door}` : "";
+        if (st.door && !el.door.value) st.door = "";
+        if (st.door) { bereken(); toon(false); }
+      }).catch((e) => { console.warn(e); el.doorVeld.hidden = true; });
+      el.door.addEventListener("change", () => {
+        const v = el.door.value;
+        st.doorNiet = v.startsWith("niet:");
+        st.door = v.replace(/^niet:/, "");
+        ververs();
+      });
     }
 
     function bereken() {
       const woorden = zoekbaar(st.q).split(/\s+/).filter(Boolean);
       const door = doorBanen();
+      const bereiken = BEREIKEN.filter((b) => st[b.k]).map((b) => [b.waarde, st[b.k]]);
       resultaat = lijst.filter((a) =>
-        (!door || door.has(a)) &&
-        (!st.gereden || a.rit) &&
+        (!st.door || !door || door.has(a) !== st.doorNiet) &&
+        (!st.gereden || !!a.rit === (st.gereden === "ja")) &&
         (!st.land || a.land === st.land) &&
+        (!st.park || parkSleutel(a) === st.park || a.park === st.park) &&
+        (!st.fabrikant || a.fabrikant === st.fabrikant) &&
+        (!st.type || a.type === st.type) &&
         (!st.status || a.status === st.status) &&
-        (!st.park || a.parkId === st.park || a.park === st.park) &&
+        (!st.inversies || (st.inversies === "ja" ? a.inversies > 0 : a.inversies === 0)) &&
+        (!st.foto || heeftFoto(a) === (st.foto === "ja")) &&
+        bereiken.every(([w, [van, tot]]) => { const x = w(a); return x != null && (van == null || x >= van) && (tot == null || x <= tot); }) &&
         woorden.every((w) => a._zoek.includes(w)));
       resultaat.sort(SORTERINGEN[st.sorteer]);
     }
 
+    // De filters die aan staan, als chips die je één voor één kunt weghalen
+    function actief() {
+      const uit = [];
+      const bereik = (b) => {
+        const [van, tot] = st[b.k], w = (x) => `${b.heel ? x : getal(x, 1)}${b.eenheid}`;
+        return van != null && tot != null ? `${b.naam} ${b.heel ? van : getal(van, 1)}–${w(tot)}`
+          : van != null ? `${b.naam} vanaf ${w(van)}` : `${b.naam} tot ${w(tot)}`;
+      };
+      if (st.land) uit.push(["land", `Land: ${st.land}`]);
+      if (st.park) uit.push(["park", `Park: ${parkNaam(st.park)}`]);
+      if (st.fabrikant) uit.push(["fabrikant", `Fabrikant: ${st.fabrikant}`]);
+      if (st.type) uit.push(["type", `Type: ${st.type}`]);
+      if (st.status) uit.push(["status", STATUS_NAMEN[st.status] || st.status]);
+      if (st.gereden) uit.push(["gereden", st.gereden === "ja" ? "Gereden" : "Nog niet gereden"]);
+      if (st.door) uit.push(["door", `${st.doorNiet ? "Nog niet gereden" : "Gereden"} door ${doorNaam()}`]);
+      for (const b of BEREIKEN) if (st[b.k]) uit.push([b.k, bereik(b)]);
+      if (st.inversies) uit.push(["inversies", st.inversies === "ja" ? "Met inversies" : "Zonder inversies"]);
+      if (st.foto) uit.push(["foto", st.foto === "ja" ? "Met foto" : "Zonder foto"]);
+      return uit;
+    }
+
+    function tekenChips() {
+      const uit = actief();
+      el.chips.innerHTML = uit.map(([k, tekst]) =>
+        `<button class="chip" type="button" data-wis="${k}">${esc(tekst)} <span aria-hidden="true">×</span><span class="sr">filter wissen</span></button>`).join("") +
+        (uit.length ? '<button class="chip-wis" type="button" data-wis="alles">Alles wissen</button>' : "");
+      el.chips.hidden = !uit.length;
+      el.aantal.textContent = uit.length ? ` (${uit.length})` : "";
+      el.paneelWis.disabled = !uit.length && !st.q;
+      // Banen waarvan iets niet bekend is, vallen weg bij een filter daarop: zeg dat erbij
+      const onbekend = [...BEREIKEN.filter((b) => st[b.k]).map((b) => b.onbekend), st.inversies ? "aantal inversies" : ""].filter(Boolean);
+      el.hint.hidden = !onbekend.length;
+      el.hint.textContent = onbekend.length ? `Achtbanen waarvan de ${lijstTekst(onbekend)} niet bekend is, staan er niet bij.` : "";
+    }
+
     function toon(alleenNieuwe) {
       const n = resultaat.length;
-      const gefilterd = st.q || st.land || st.status || st.park || st.gereden || st.door;
-      const door = st.door && doorProfiel() ? `, gereden door ${doorProfiel().profiel.weergavenaam}` : "";
-      el.tekst.textContent = st.gereden
-        ? `${getal(n)} ${meervoud(n, "credit", "credits")}${door}`
+      const gefilterd = st.q || actief().length;
+      const door = st.door && doorProfiel() ? `, ${st.doorNiet ? "nog niet " : ""}gereden door ${doorNaam()}` : "";
+      el.tekst.textContent = st.gereden === "ja" && !st.door
+        ? `${getal(n)} ${meervoud(n, "credit", "credits")}`
         : `${getal(n)} ${meervoud(n, "achtbaan", "achtbanen")}${gefilterd ? " gevonden" : " in de lijst"}${door}`;
+      el.paneelToon.textContent = `Toon ${getal(n)} ${meervoud(n, "achtbaan", "achtbanen")}`;
+      tekenChips();
 
-      el.park.innerHTML = st.park
-        ? `<button class="chip" type="button" id="park-wis">Alleen ${esc(parkNaam())} <span aria-hidden="true">×</span><span class="sr">filter wissen</span></button>`
-        : "";
-      if (st.park) $("#park-wis").addEventListener("click", () => { st.park = ""; ververs(); });
-
+      const weergave = af.aan ? "kaartjes" : st.weergave;
+      el.raster.className = `raster weergave-${weergave}${af.aan ? " is-afvink" : ""}`;
+      for (const k of el.weergave.querySelectorAll("button")) {
+        k.setAttribute("aria-pressed", String(k.dataset.weergave === weergave));
+        k.disabled = af.aan;
+      }
       if (!n) {
         el.raster.innerHTML = `<div class="leeg">
           <p>Geen achtbanen gevonden met deze zoekopdracht en filters.</p>
@@ -1004,14 +1409,22 @@
           ${beheer ? '<button class="knop" type="button" id="ontbreekt-leeg">Achtbaan ontbreekt</button>' : ""}</div></div>`;
         $("#wis-alles").addEventListener("click", wisAlles);
         el.meer.hidden = true;
+        tekenAfvink();
         return;
       }
-      const kaartje = (a) => kaartHtml(a, af.aan ? af.gekozen : null);
-      el.raster.classList.toggle("is-afvink", af.aan);
-      if (alleenNieuwe) {
-        el.raster.insertAdjacentHTML("beforeend", resultaat.slice(st.toon - PER_KEER, st.toon).map(kaartje).join(""));
+      const stuk = WEERGAVEN[weergave];
+      const zichtbaar = resultaat.slice(0, st.toon);
+      if (weergave === "kaartjes") {
+        const kaartje = (a) => kaartHtml(a, af.aan ? af.gekozen : null);
+        if (alleenNieuwe) el.raster.insertAdjacentHTML("beforeend", resultaat.slice(st.toon - stuk, st.toon).map(kaartje).join(""));
+        else el.raster.innerHTML = zichtbaar.map(kaartje).join("");
+      } else if (weergave === "lijst") {
+        if (alleenNieuwe && $(".lijst-weergave", el.raster)) $(".lijst-weergave", el.raster).insertAdjacentHTML("beforeend", resultaat.slice(st.toon - stuk, st.toon).map(rijHtml).join(""));
+        else el.raster.innerHTML = `<ul class="lijst-weergave">${zichtbaar.map(rijHtml).join("")}</ul>`;
+      } else if (alleenNieuwe && $(".tabel tbody", el.raster)) {
+        $(".tabel tbody", el.raster).insertAdjacentHTML("beforeend", resultaat.slice(st.toon - stuk, st.toon).map(tabelRijHtml).join(""));
       } else {
-        el.raster.innerHTML = resultaat.slice(0, st.toon).map(kaartje).join("");
+        el.raster.innerHTML = tabelHtml(zichtbaar, st.sorteer);
       }
       const over = n - st.toon;
       el.meer.hidden = over <= 0;
@@ -1035,7 +1448,7 @@
           if (b) { af.aan = !!b.aan; af.gekozen = new Set((b.ids || []).filter((id) => data.perId.has(id))); }
         } catch (e) { /* begin leeg */ }
       }
-      el.filters.insertAdjacentHTML("afterend", '<div class="beheer-balk" id="beheer-balk"></div>');
+      el.chips.insertAdjacentHTML("beforebegin", '<div class="beheer-balk" id="beheer-balk"></div>');
       $("#overzicht").insertAdjacentHTML("beforeend", '<div class="afvink-balk" id="afvink-balk" hidden></div>');
     }
     const bewaarAfvink = () => opslag.zet(AFVINK, JSON.stringify({ aan: af.aan, ids: [...af.gekozen] }));
@@ -1129,30 +1542,176 @@
       });
     }
 
-    function ververs() { st.toon = PER_KEER; bereken(); toon(false); bewaarInAdres(); }
+    function ververs() { st.toon = WEERGAVEN[st.weergave]; bereken(); toon(false); bewaarInAdres(); }
+    function wis(k) {
+      if (k === "door") { st.door = ""; st.doorNiet = false; el.door.value = ""; return; }
+      if (BEREIKEN.some((b) => b.k === k)) { st[k] = null; $(`#${k}-van`).value = ""; $(`#${k}-tot`).value = ""; return; }
+      st[k] = "";
+      el[k].value = "";
+      if (k === "land") vulParken();
+    }
     function wisAlles() {
-      Object.assign(st, { q: "", land: "", status: "", park: "", gereden: false, door: "" });
-      el.zoek.value = ""; el.land.value = ""; el.status.value = ""; el.gereden.checked = false;
-      if (el.door) el.door.value = "";
+      for (const k of [...KEUZES, "door", ...BEREIKEN.map((b) => b.k)]) wis(k);
+      st.q = ""; el.zoek.value = "";
+      vulParken();
       ververs();
     }
 
-    let wachtOp;
-    el.zoek.addEventListener("input", () => {
-      clearTimeout(wachtOp);
-      wachtOp = setTimeout(() => { st.q = el.zoek.value.trim(); ververs(); }, 150);
+    for (const k of KEUZES) {
+      el[k].addEventListener("change", () => {
+        st[k] = el[k].value;
+        if (k === "land") { vulParken(); if (st.park && perPark.get(st.park)?.land !== st.land && st.land) { st.park = ""; vulParken(); } }
+        if (k === "gereden" && st.gereden === "ja" && st.sorteer === "naam") { st.sorteer = "rit"; vulSorteer(); }
+        ververs();
+      });
+    }
+    // Van-tot: pas na even wachten, zodat je rustig kunt typen
+    for (const b of BEREIKEN) {
+      let wachtB;
+      const lees = () => {
+        const n = (v) => (v.trim() === "" || isNaN(Number(v)) || Number(v) < 0 ? null : Number(v));
+        const van = n($(`#${b.k}-van`).value), tot = n($(`#${b.k}-tot`).value);
+        const nieuw = van == null && tot == null ? null : [van, tot];
+        if (bereikTekst(nieuw) !== bereikTekst(st[b.k])) { st[b.k] = nieuw; ververs(); }
+      };
+      for (const kant of ["van", "tot"]) {
+        const veldje = $(`#${b.k}-${kant}`);
+        veldje.addEventListener("input", () => { clearTimeout(wachtB); wachtB = setTimeout(lees, 450); });
+        veldje.addEventListener("change", () => { clearTimeout(wachtB); lees(); });
+      }
+    }
+    el.chips.addEventListener("click", (e) => {
+      const knop = e.target.closest("[data-wis]");
+      if (!knop) return;
+      if (knop.dataset.wis === "alles") { wisAlles(); return; }
+      wis(knop.dataset.wis);
+      ververs();
+      (el.chips.querySelector("[data-wis]") || el.zoek).focus();
     });
-    el.land.addEventListener("change", () => { st.land = el.land.value; ververs(); });
-    el.status.addEventListener("change", () => { st.status = el.status.value; ververs(); });
-    el.sorteer.addEventListener("change", () => { st.sorteer = el.sorteer.value; ververs(); });
-    el.gereden.addEventListener("change", () => {
-      st.gereden = el.gereden.checked;
-      if (st.gereden && st.sorteer === "naam") { st.sorteer = "rit"; el.sorteer.value = "rit"; }
+    el.paneelWis.addEventListener("click", wisAlles);
+    el.sorteer.addEventListener("change", () => { st.sorteer = el.sorteer.value; vulSorteer(); ververs(); });
+    el.weergave.addEventListener("click", (e) => {
+      const knop = e.target.closest("[data-weergave]");
+      if (!knop || af.aan || knop.dataset.weergave === st.weergave) return;
+      st.weergave = knop.dataset.weergave;
       ververs();
     });
-    el.meer.addEventListener("click", () => { st.toon += PER_KEER; toon(true); });
-    // Foto's die niet laden: eigen foto nog eens proberen bij GitHub, anders weghalen
-    el.raster.addEventListener("error", (e) => { if (e.target.tagName === "IMG") fotoMislukt(e.target); }, true);
+    // Tabel: klik op een kolomkop om daarop te sorteren (nog een keer: andersom)
+    el.raster.addEventListener("click", (e) => {
+      const knop = e.target.closest("[data-kolom]");
+      if (!knop) return;
+      const c = KOLOMMEN.find((x) => x.k === knop.dataset.kolom);
+      st.sorteer = st.sorteer === c.af ? c.op : st.sorteer === c.op ? c.af : c.getal ? c.af : c.op;
+      vulSorteer();
+      ververs();
+      $(`[data-kolom="${c.k}"]`, el.raster)?.focus();
+    });
+    el.meer.addEventListener("click", () => { st.toon += WEERGAVEN[af.aan ? "kaartjes" : st.weergave]; toon(true); });
+    // Foto's die niet laden: eigen foto nog eens proberen bij GitHub, anders een tekening
+    fotoFoutenNaarTekening(el.raster, data);
+
+    /* ---------- Uitschuifpaneel op een smal scherm ---------- */
+    const smal = matchMedia("(max-width: 47.99rem)");
+    function zetPaneel(open, focus = true) {
+      el.paneel.classList.toggle("is-open", open);
+      el.open.setAttribute("aria-expanded", String(open));
+      el.achter.hidden = !open;
+      document.body.classList.toggle("paneel-open", open);
+      if (focus) (open ? el.dicht : el.open).focus();
+    }
+    function pasPaneelAan() {
+      if (smal.matches) {
+        Object.entries({ role: "dialog", "aria-modal": "true", "aria-labelledby": "paneel-titel" }).forEach(([k, v]) => el.paneel.setAttribute(k, v));
+        el.paneel.removeAttribute("aria-label");
+      } else {
+        ["role", "aria-modal", "aria-labelledby"].forEach((k) => el.paneel.removeAttribute(k));
+        el.paneel.setAttribute("aria-label", "Filters");
+        if (el.paneel.classList.contains("is-open")) zetPaneel(false, false);
+      }
+    }
+    pasPaneelAan();
+    smal.addEventListener?.("change", pasPaneelAan);
+    el.open.addEventListener("click", () => zetPaneel(true));
+    el.dicht.addEventListener("click", () => zetPaneel(false));
+    el.paneelToon.addEventListener("click", () => { zetPaneel(false); $("#overzicht-titel").scrollIntoView({ block: "start" }); });
+    el.achter.addEventListener("click", () => zetPaneel(false));
+    el.paneel.addEventListener("keydown", (e) => {
+      if (!el.paneel.classList.contains("is-open")) return;
+      if (e.key === "Escape") { e.preventDefault(); zetPaneel(false); return; }
+      if (e.key !== "Tab") return;
+      // De focus blijft in het paneel zolang het open is
+      const vakken = [...el.paneel.querySelectorAll("button, select, input")].filter((x) => !x.disabled && x.offsetParent);
+      const eerste = vakken[0], laatste = vakken[vakken.length - 1];
+      if (e.shiftKey && document.activeElement === eerste) { e.preventDefault(); laatste.focus(); }
+      else if (!e.shiftKey && document.activeElement === laatste) { e.preventDefault(); eerste.focus(); }
+    });
+
+    /* ---------- Zoeken met suggesties ----------
+       Achtbanen, parken, fabrikanten en landen; hoofdletters en accenten maken niet uit. */
+    const zoekIndex = [];
+    const opZoek = (soort, naam, extra, n, doe) => zoekIndex.push({ soort, naam, extra, n, doe, z: zoekbaar(naam) });
+    for (const [k, x] of perLand) opZoek("Land", x.naam, `${getal(x.n)} ${meervoud(x.n, "achtbaan", "achtbanen")}`, x.n, () => kies("land", k));
+    for (const [k, x] of perPark) opZoek("Park", x.naam, x.land, x.n, () => { location.href = parkPagina(k); });
+    for (const [k, x] of perFabrikant) opZoek("Fabrikant", x.naam, `${getal(x.n)} ${meervoud(x.n, "achtbaan", "achtbanen")}`, x.n, () => kies("fabrikant", k));
+    for (const a of lijst) opZoek("Achtbaan", a.naam, [a.park, a.land].filter(Boolean).join(", "), 0, () => { location.href = pagina(a); });
+    const MAX = { Land: 2, Park: 3, Fabrikant: 2, Achtbaan: 6 };
+
+    function kies(k, waarde) {
+      st.q = ""; el.zoek.value = "";
+      st[k] = waarde; el[k].value = waarde;
+      if (k === "land") vulParken();
+      sluitSuggesties();
+      ververs();
+    }
+    let gekozen = -1, gevonden = [];
+    function sluitSuggesties() {
+      el.suggesties.hidden = true;
+      el.zoek.setAttribute("aria-expanded", "false");
+      el.zoek.removeAttribute("aria-activedescendant");
+      gekozen = -1;
+    }
+    function zoekSuggesties() {
+      const woorden = zoekbaar(el.zoek.value).split(/\s+/).filter(Boolean);
+      if (!woorden.length || woorden.join("").length < 2) { sluitSuggesties(); return; }
+      const per = {};
+      const score = (x) => (x.z.startsWith(woorden[0]) ? 0 : x.z.includes(` ${woorden[0]}`) ? 1 : 2);
+      gevonden = zoekIndex.filter((x) => woorden.every((w) => x.z.includes(w)))
+        .sort((x, y) => score(x) - score(y) || y.n - x.n || x.naam.localeCompare(y.naam, TAAL))
+        .filter((x) => (per[x.soort] = (per[x.soort] || 0) + 1) <= MAX[x.soort])
+        .sort((x, y) => Object.keys(MAX).indexOf(x.soort) - Object.keys(MAX).indexOf(y.soort) || score(x) - score(y));
+      if (!gevonden.length) { sluitSuggesties(); return; }
+      gekozen = -1;
+      el.suggesties.innerHTML = gevonden.map((x, i) => `<li role="option" id="sug-${i}" aria-selected="false" data-i="${i}">
+        <span class="sug-soort">${x.soort}</span><span class="sug-naam">${esc(x.naam)}</span>${x.extra ? `<span class="sug-extra">${esc(x.extra)}</span>` : ""}</li>`).join("");
+      el.suggesties.hidden = false;
+      el.zoek.setAttribute("aria-expanded", "true");
+    }
+    function markeer(i) {
+      gekozen = (i + gevonden.length) % gevonden.length;
+      el.suggesties.querySelectorAll("[role=option]").forEach((li, j) => li.setAttribute("aria-selected", String(j === gekozen)));
+      el.zoek.setAttribute("aria-activedescendant", `sug-${gekozen}`);
+      $(`#sug-${gekozen}`)?.scrollIntoView({ block: "nearest" });
+    }
+    let wachtOp, wachtSug;
+    el.zoek.addEventListener("input", () => {
+      clearTimeout(wachtOp); clearTimeout(wachtSug);
+      wachtSug = setTimeout(zoekSuggesties, 80);
+      wachtOp = setTimeout(() => { st.q = el.zoek.value.trim(); ververs(); }, 200);
+    });
+    el.zoek.addEventListener("keydown", (e) => {
+      const open = !el.suggesties.hidden;
+      if (e.key === "ArrowDown" && open) { e.preventDefault(); markeer(gekozen + 1); }
+      else if (e.key === "ArrowUp" && open) { e.preventDefault(); markeer(gekozen - 1); }
+      else if (e.key === "Enter" && open && gekozen >= 0) { e.preventDefault(); gevonden[gekozen].doe(); }
+      else if (e.key === "Enter") { clearTimeout(wachtOp); st.q = el.zoek.value.trim(); sluitSuggesties(); ververs(); }
+      else if (e.key === "Escape" && open) { e.preventDefault(); sluitSuggesties(); }
+    });
+    el.zoek.addEventListener("blur", () => setTimeout(sluitSuggesties, 150));
+    el.suggesties.addEventListener("mousedown", (e) => e.preventDefault()); // focus blijft in het zoekvak
+    el.suggesties.addEventListener("click", (e) => {
+      const li = e.target.closest("[data-i]");
+      if (li) gevonden[Number(li.dataset.i)].doe();
+    });
 
     // Terugkomen van een attractiepagina: zelfde plek in de lijst
     let terug = null;
@@ -1160,7 +1719,7 @@
       const nav = performance.getEntriesByType("navigation")[0];
       if (nav && nav.type === "back_forward") terug = JSON.parse(sessionStorage.getItem("overzicht") || "null");
     } catch (e) { terug = null; }
-    if (terug && terug.toon > PER_KEER) st.toon = terug.toon;
+    if (terug && terug.toon > st.toon) st.toon = terug.toon;
     addEventListener("pagehide", () => {
       try { sessionStorage.setItem("overzicht", JSON.stringify({ toon: st.toon, y: scrollY })); } catch (e) { /* geen opslag */ }
     });
@@ -1195,11 +1754,14 @@
 
   /* ---------- Attractiepagina ---------- */
 
-  async function haalWikipedia(qid) {
-    const u1 = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${qid}&props=sitelinks` +
-      `&sitefilter=${encodeURIComponent("nlwiki|enwiki")}&format=json&origin=*`;
-    const links = (await (await fetch(u1)).json()).entities?.[qid]?.sitelinks || {};
-    const keuze = links.nlwiki ? ["nl", links.nlwiki.title] : links.enwiki ? ["en", links.enwiki.title] : null;
+  async function haalWikipedia(qid, bekend) {
+    let keuze = bekend && (bekend.nl ? ["nl", bekend.nl] : bekend.en ? ["en", bekend.en] : null);
+    if (!keuze) {
+      const u1 = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${qid}&props=sitelinks` +
+        `&sitefilter=${encodeURIComponent("nlwiki|enwiki")}&format=json&origin=*`;
+      const links = (await (await fetch(u1)).json()).entities?.[qid]?.sitelinks || {};
+      keuze = links.nlwiki ? ["nl", links.nlwiki.title] : links.enwiki ? ["en", links.enwiki.title] : null;
+    }
     if (!keuze) return null;
     const [taal, titel] = keuze;
     const u2 = `https://${taal}.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1` +
@@ -1227,21 +1789,51 @@
     return m ? `${m}:${String(s).padStart(2, "0")}` : `${s} s`;
   }
 
-  function specsHtml(a) {
-    const rijen = [
-      ["Hoogte", a.hoogte && `${getal(a.hoogte, 1)} m`],
-      ["Topsnelheid", a.snelheid && `${getal(a.snelheid)} km/u`],
-      ["Lengte", a.lengte && `${getal(a.lengte)} m`],
-      ["Ritduur", a.duur && duurTekst(a.duur)],
-      [a.status === "gepland" ? "Opent" : "Geopend", a.geopend],
-      ["Gesloten", a.gesloten],
-      ["Fabrikant", a.fabrikant, true],
-      ["Type", a.type, true],
-    ].filter(([, w]) => w);
-    if (!rijen.length) return "";
-    return `<dl class="specs">${rijen.map(([label, w, tekst]) =>
-      `<div><dt>${label}</dt><dd${tekst ? ' class="tekstwaarde"' : ""}>${esc(w)}</dd></div>`).join("")}</dl>`;
+  /* Bron van een gegeven, klein en met een link naar die bron */
+  const BRON_NAMEN = { wd: "Wikidata", "wp:en": "Engelse Wikipedia", "wp:nl": "Nederlandse Wikipedia", "wp:de": "Duitse Wikipedia", osm: "OpenStreetMap", eigen: "Eigen aanvulling", plek: "afgeleid uit de plek op de kaart", park: "afgeleid uit het park" };
+  const wikiUrl = (taal, titel) => `https://${taal}.wikipedia.org/wiki/${encodeURIComponent(String(titel).replace(/ /g, "_"))}`;
+  const osmPad = (a) => (/^(node|way|relation)\/\d+$/.test(a.osm || "") ? a.osm
+    : /^osm-(node|way|relation)-\d+$/.test(a.id) ? a.id.slice(4).replace("-", "/") : "");
+  function bronLink(a, code) {
+    if (!code) return "";
+    if (code === "eigen") return `<span>${esc(BRON_NAMEN.eigen)}${a.eigenBron ? `: ${esc(a.eigenBron)}` : ""}</span>`;
+    const naam = esc(BRON_NAMEN[code] || code);
+    let url = "";
+    if (code === "wd" && wikidataVan(a)) url = `https://www.wikidata.org/wiki/${wikidataVan(a)}`;
+    else if (code.startsWith("wp:") && a.wp && a.wp[code.slice(3)]) url = wikiUrl(code.slice(3), a.wp[code.slice(3)]);
+    else if (code === "osm" && osmPad(a)) url = `https://www.openstreetmap.org/${osmPad(a)}`;
+    return url ? `<a href="${esc(url)}">${naam}</a>` : naam;
   }
+
+  function specsHtml(a) {
+    const b = a.bron || {};
+    const rijen = [
+      ["Hoogte", a.hoogte && `${getal(a.hoogte, 1)} m`, false, "hoogte"],
+      ["Valhoogte", a.valhoogte && `${getal(a.valhoogte, 1)} m`, false, "valhoogte"],
+      ["Topsnelheid", a.snelheid && `${getal(a.snelheid)} km/u`, false, "snelheid"],
+      ["Lengte", a.lengte && `${getal(a.lengte)} m`, false, "lengte"],
+      ["Inversies", a.inversies != null && getal(a.inversies), false, "inversies"],
+      ["Ritduur", a.duur && duurTekst(a.duur), false, "duur"],
+      [a.status === "gepland" ? "Opent" : "Geopend", a.geopend, false, "geopend"],
+      ["Gesloten", a.gesloten, false, "gesloten"],
+      ["Fabrikant", a.fabrikant, true, "fabrikant"],
+      ["Model", a.model, true, "model"],
+      ["Type", a.type, true, "type"],
+    ].filter(([, w]) => w !== undefined && w !== null && w !== "" && w !== false);
+    if (!rijen.length) return "";
+    return `<dl class="specs">${rijen.map(([label, w, tekst, veld]) =>
+      `<div><dt>${label}</dt><dd${tekst ? ' class="tekstwaarde"' : ""}>${esc(w)}</dd>${b[veld] ? `<dd class="spec-bron">${bronLink(a, b[veld])}</dd>` : ""}</div>`).join("")}</dl>`;
+  }
+
+  // Eerder in een ander park (verhuisde banen)
+  function vorigeParkenHtml(a) {
+    const lijst = (a.vorigeParken || []).filter((p) => p && p.park);
+    if (!lijst.length) return "";
+    const jaren = (p) => (p.van || p.tot ? ` (${p.van || "?"}–${p.tot || "?"})` : "");
+    return `<p class="vorig">Eerder in ${lijst.map((p) => (p.parkId
+      ? `<a href="${esc(parkLink(p.parkId))}">${esc(p.park)}</a>` : esc(p.park)) + esc(jaren(p))).join(", ")}</p>`;
+  }
+  const parkLink = (parkId) => parkPagina(parkId);
 
   function ritOmschrijving(x) {
     return [
@@ -1289,10 +1881,10 @@
     anderen.sort((x, y) => (x.status === "gesloten") - (y.status === "gesloten") || opNaam(x, y));
     const alle = [a, ...anderen];
     const gereden = alle.filter((x) => x.rit).length;
-    const parkLink = `./?park=${encodeURIComponent(a.parkId || a.park)}#overzicht`;
+    const parkLink = parkPagina(parkSleutel(a));
     return `<section class="blok">
       <h2>Meer achtbanen in ${esc(a.park)}</h2>
-      <p>${gereden} van de ${alle.length} gereden. <a href="${parkLink}">Bekijk het park in het overzicht</a></p>
+      <p>${gereden} van de ${alle.length} gereden. <a href="${parkLink}">Naar de pagina van het park</a></p>
       <ul class="park-lijst">${anderen.map((x) => `<li>
         <a href="${pagina(x)}">${esc(x.naam)}</a>
         ${x.rit ? '<span class="vink">✓ gereden</span>' : x.status === "gesloten" ? `<span class="dicht">${esc(statusTekst(x))}</span>` : ""}
@@ -1309,7 +1901,26 @@
     const lat = Number(a.lat), lon = Number(a.lon);
     if (osm) links.push(`<a href="https://www.openstreetmap.org/${osm}">OpenStreetMap</a>`);
     else if (a.lat != null && isFinite(lat) && isFinite(lon)) links.push(`<a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}">OpenStreetMap</a>`);
-    return `<section class="blok"><h2>Meer weten</h2><ul class="links">${links.map((l) => `<li>${l}</li>`).join("")}</ul></section>`;
+    for (const [taal, titel] of Object.entries(a.wp || {})) {
+      links.push(`<a href="${esc(wikiUrl(taal, titel))}">${{ nl: "Wikipedia", en: "Engelse Wikipedia", de: "Duitse Wikipedia" }[taal] || "Wikipedia"}</a>`);
+    }
+    // Per bron welke gegevens ervandaan komen
+    const NAMEN = { hoogte: "hoogte", valhoogte: "valhoogte", lengte: "lengte", snelheid: "snelheid", inversies: "inversies", duur: "ritduur",
+      geopend: "opening", gesloten: "sluiting", status: "status", fabrikant: "fabrikant", model: "model", type: "type", park: "park", land: "land", vorigeParken: "vorige parken" };
+    const perBron = new Map();
+    for (const [veld, code] of Object.entries(a.bron || {})) {
+      if (!NAMEN[veld]) continue;
+      if (!perBron.has(code)) perBron.set(code, []);
+      perBron.get(code).push(NAMEN[veld]);
+    }
+    const volgorde = ["eigen", "wd", "wp:nl", "wp:en", "wp:de", "osm"];
+    const regels = [...perBron.entries()].sort((x, y) => volgorde.indexOf(x[0]) - volgorde.indexOf(y[0]))
+      .map(([code, velden]) => `<li><span class="bron-naam">${bronLink(a, code)}</span>: ${esc(velden.join(", "))}</li>`);
+    const wikipedia = Object.values(a.bron || {}).some((c) => String(c).startsWith("wp:"));
+    return `<section class="blok"><h2>Meer weten</h2><ul class="links">${links.map((l) => `<li>${l}</li>`).join("")}</ul>
+      ${regels.length ? `<h3 class="beheer-kop">Waar de gegevens vandaan komen</h3><ul class="bronnen-lijst">${regels.join("")}</ul>
+        ${wikipedia ? '<p class="bron-klein">Gegevens uit Wikipedia vallen onder CC BY-SA. Wikidata is vrij te gebruiken (CC0), OpenStreetMap valt onder de ODbL.</p>' : ""}` : ""}
+    </section>`;
   }
 
   /* ---------- Venster: rit toevoegen of bewerken (alleen beheer) ---------- */
@@ -1644,13 +2255,13 @@
   function beheerBlokHtml(a, data) {
     if (data.verborgen.has(a.id)) {
       const v = data.verborgen.get(a.id);
-      return `<section class="blok"><div class="mijn-rit beheer-blok">
+      return `<section class="blok" id="beheer"><div class="mijn-rit beheer-blok">
         <p><strong>Deze baan is verborgen</strong>${v.reden ? ` (${esc(v.reden)})` : ""}. Bezoekers zien hem niet.</p>
         <button class="knop knop-licht" type="button" data-terugzetten>Terugzetten</button></div></section>`;
     }
     const voorstel = !a.deelVan && data.voorstellen[a.id];
     const foto = a.eigenFoto;
-    return `<section class="blok"><h2>Beheer</h2><div class="mijn-rit beheer-blok">
+    return `<section class="blok" id="beheer"><h2>Beheer</h2><div class="mijn-rit beheer-blok">
       <div class="foto-kiezen">
         <span class="foto-kiezen-titel">Eigen foto</span>
         <div class="foto-kiezen-rij">
@@ -1665,6 +2276,7 @@
       </div>
       ${voorstel ? `<p>OpenStreetMap ziet hier ${voorstel.length} sporen met een eigen naam: ${voorstel.map(esc).join(", ")}.</p>` : ""}
       <div class="knoppen-rij">
+        <button class="knop knop-licht" type="button" data-aanvullen>${a._eigen ? "Aanvulling bewerken" : "Gegevens aanvullen"}</button>
         ${a.deelVan ? "" : `<button class="knop knop-licht" type="button" data-splits='${voorstel ? esc(JSON.stringify(voorstel)) : ""}'>Splitsen in losse sporen</button>`}
         <button class="knop knop-licht knop-gevaar" type="button" data-verberg>Verbergen</button>
       </div>
@@ -1810,6 +2422,113 @@
     });
   }
 
+  /* ---------- Venster: gegevens aanvullen (alleen beheer) ----------
+     Vul in wat je weet; een leeg vak betekent: gebruik wat de bronnen zeggen.
+     Komt in data/aanvullingen.json, met de bron die je opgeeft. */
+  function openAanvulVenster(a, data, klaar) {
+    const eigen = a._eigen || {};
+    const orig = a._origineel || {};
+    const nuWaarde = (veld) => (veld in orig ? orig[veld] : a[veld]);
+    const nuBron = (veld) => ((a._origineel ? a._origineel.bron : a.bron) || {})[veld];
+    const lijstOpties = (veld) => {
+      const tel = new Map();
+      for (const x of data.lijst) if (x[veld]) tel.set(x[veld], (tel.get(x[veld]) || 0) + 1);
+      return [...tel.entries()].sort((p, q) => q[1] - p[1]).slice(0, 400).map(([w]) => `<option value="${esc(w)}"></option>`).join("");
+    };
+    const veldHtml = (v) => {
+      const huidig = nuWaarde(v.veld);
+      const hint = huidig !== undefined && huidig !== null && huidig !== ""
+        ? `nu: ${huidig}${nuBron(v.veld) ? ` (${BRON_NAMEN[nuBron(v.veld)] || nuBron(v.veld)})` : ""}` : "nu: onbekend";
+      const w = eigen[v.veld] ?? "";
+      let invoer;
+      if (v.soort === "keuze") {
+        invoer = `<select id="av-${v.veld}"><option value="">Zoals de bronnen zeggen</option>${v.opties.map(([k, t]) =>
+          `<option value="${esc(k)}"${String(w) === k ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+      } else if (v.soort === "tekst") {
+        invoer = `<input type="text" id="av-${v.veld}" maxlength="${v.max}" value="${esc(w)}"${v.lijst ? ` list="av-lijst-${v.veld}"` : ""} autocomplete="off">
+          ${v.lijst ? `<datalist id="av-lijst-${v.veld}">${lijstOpties(v.lijst)}</datalist>` : ""}`;
+      } else {
+        invoer = `<input type="text" inputmode="decimal" id="av-${v.veld}" value="${esc(String(w).replace(".", ","))}" autocomplete="off">`;
+      }
+      return `<label>${esc(v.label)} ${invoer}<span class="av-nu">${esc(hint)}</span></label>`;
+    };
+    const d = maakVenster(`Gegevens van ${a.naam}`, `
+      <form method="dialog" class="formulier" id="av-form" novalidate>
+        <p class="klein">Vul alleen in wat je zelf weet of wilt verbeteren. Een leeg vak betekent: gebruik wat Wikidata, Wikipedia of OpenStreetMap zeggen.</p>
+        <div class="av-velden">${AANVUL_VELDEN.map(veldHtml).join("")}</div>
+        <label>Bron (verplicht) <input type="text" id="av-bron" maxlength="200" value="${esc(eigen.bron || "")}" placeholder="Bijvoorbeeld: bordje bij de ingang, juli 2025"></label>
+        <p class="fout" id="av-fout" role="alert"></p>
+        <div class="knoppen">
+          <button class="knop" type="submit" id="av-opslaan">Opslaan</button>
+          <button class="knop knop-licht" type="button" id="av-sluit">Annuleren</button>
+          ${a._eigen ? '<button class="knop knop-licht knop-gevaar" type="button" id="av-weg">Aanvulling weghalen</button>' : ""}
+        </div>
+        <p class="klein">Komt in <code>data/aanvullingen.json</code> op GitHub. Bezoekers zien het na een paar minuten.</p>
+      </form>`);
+    d.classList.add("dialoog-breed");
+    const veld = (id) => $(`#${id}`, d);
+    veld("av-sluit").addEventListener("click", () => d.close());
+
+    function lees() {
+      const x = {};
+      for (const v of AANVUL_VELDEN) {
+        const ruw = veld(`av-${v.veld}`).value.trim();
+        if (!ruw) continue;
+        if (v.soort === "getal") {
+          const n = Number(ruw.replace(",", "."));
+          if (!isFinite(n) || n < v.min || n > v.max) throw new Error(`${v.label}: vul een getal in van ${v.min} tot ${v.max}.`);
+          x[v.veld] = v.dec ? Math.round(n * 10) / 10 : Math.round(n);
+        } else if (v.soort === "jaar") {
+          const j = Number(ruw);
+          if (!/^\d{4}$/.test(ruw) || j < 1850 || j > new Date().getFullYear() + 6) throw new Error(`${v.label}: vul een jaar in, zoals 2006.`);
+          x[v.veld] = j;
+        } else {
+          x[v.veld] = netteTekst(ruw).slice(0, v.max || 100);
+        }
+      }
+      if (x.geopend && x.gesloten && x.gesloten < x.geopend) throw new Error("Gesloten kan niet eerder zijn dan geopend.");
+      return x;
+    }
+
+    async function bewaar(regel, bericht) {
+      await wijzigJson("data/aanvullingen.json", "aanvullingen",
+        (lijst) => [...lijst.filter((x) => x && x.id !== a.id), ...(regel ? [regel] : [])], bericht);
+      for (const b of data.aanvulDoel(a.id)) herstelAanvulling(b);
+      if (regel) {
+        data.aanvullingen.set(a.id, regel);
+        for (const b of data.aanvulDoel(a.id)) zetAanvulling(b, regel);
+      } else data.aanvullingen.delete(a.id);
+      if (regel && regel.park) {
+        const zelfde = data.lijst.find((x) => x.parkId && zoekbaar(x.park) === zoekbaar(regel.park));
+        for (const b of data.aanvulDoel(a.id)) b.parkId = zelfde ? zelfde.parkId : undefined;
+      }
+    }
+
+    veld("av-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fout = veld("av-fout");
+      let x;
+      try { x = lees(); } catch (f) { fout.textContent = f.message; return; }
+      const bron = netteTekst(veld("av-bron").value).slice(0, 200);
+      if (Object.keys(x).length && !bron) { fout.textContent = "Vul in waar je het vandaan hebt (bron)."; return; }
+      const regel = Object.keys(x).length ? { id: a.id, ...x, bron } : null;
+      const gelukt = await metKnop(veld("av-opslaan"), fout, "Opslaan…", () =>
+        bewaar(regel, regel ? `Gegevens aangevuld: ${a.naam}` : `Aanvulling weggehaald: ${a.naam}`));
+      if (!gelukt) return;
+      d.close();
+      klaar();
+      toast("Opgeslagen. Bezoekers zien het over een paar minuten.", true);
+    });
+    veld("av-weg")?.addEventListener("click", (e) => {
+      if (!confirm("Je aanvulling bij deze achtbaan weghalen? Dan gelden weer de gegevens uit de bronnen.")) return;
+      metKnop(e.currentTarget, veld("av-fout"), "Bezig…", async () => {
+        await bewaar(null, `Aanvulling weggehaald: ${a.naam}`);
+        d.close();
+        klaar();
+      });
+    });
+  }
+
   function zetTerug(id, naam) {
     return wijzigJson("data/verborgen.json", "verborgen", (lijst) => lijst.filter((v) => v && v.id !== id), `Teruggezet: ${naam}`);
   }
@@ -1847,10 +2566,10 @@
       try { persoon = await laadPersoon(data, ik); } catch (e) { console.warn(e); toast(e.message, true); }
     }
     zetPersoon(data, persoon || await laadEigenaar(data));
-    if (data.details) {
-      try { Object.assign(a, ((await haalJson(data.details, false)) || {})[a.id] || {}); } catch (e) { console.warn(e); }
-    }
+    try { await haalDetails(data, a); } catch (e) { console.warn(e); }
     tekenAchtbaan(a, data);
+    // Van "Ontbrekende gegevens": meteen naar de beheerknoppen
+    if (location.hash === "#beheer") $("#beheer")?.scrollIntoView({ block: "start" });
   }
 
   function tekenAchtbaan(a, data) {
@@ -1859,10 +2578,10 @@
     const fotoVeld = eigenFoto || a.foto;
     const src = fotoBron(fotoVeld, 1280);
     const eigen = eigenPad(fotoVeld);
-    const fotoBijschrift = eigenFoto ? "Eigen foto"
-      : a.foto && !isEigenFoto(a.foto) ? `Foto: <a href="${commonsPagina(a.foto)}">Wikimedia Commons</a>` : "";
+    const fotoBijschrift = eigenFoto || isEigenFoto(a.foto) ? (src ? "Eigen foto" : "")
+      : a.foto ? commonsBijschrift(a.foto, a.fotoInfo) : "";
     const plek = [
-      a.park ? `<a href="./?park=${encodeURIComponent(a.parkId || a.park)}#overzicht">${esc(a.park)}</a>` : "",
+      a.park ? `<a href="${parkPagina(parkSleutel(a))}">${esc(a.park)}</a>` : "",
       a.land ? esc(a.land) : "",
     ].filter(Boolean).join(", ");
 
@@ -1873,8 +2592,8 @@
     vak.innerHTML = `
       <nav class="terug" aria-label="Terug"><a href="./#overzicht" id="terug">Alle achtbanen</a></nav>
       <figure class="foto-groot">
-        ${src ? `<img src="${esc(src)}" alt="Foto van ${esc(a.naam)}" id="hoofdfoto"${eigen ? ` data-eigen="${esc(eigen)}"` : ""}>` : '<div class="foto-leeg" role="img" aria-label="Geen foto beschikbaar"></div>'}
-        ${fotoBijschrift ? `<figcaption id="foto-bron">${fotoBijschrift}</figcaption>` : ""}
+        ${src ? `<img src="${esc(src)}" alt="Foto van ${esc(a.naam)}" id="hoofdfoto"${eigen ? ` data-eigen="${esc(eigen)}"` : ""}>` : `<div class="foto-leeg">${illustratie(a, 640, 360)}</div>`}
+        <figcaption id="foto-bron">${src ? fotoBijschrift : TEKENING_UITLEG}</figcaption>
       </figure>
       <header class="titel">
         <div>
@@ -1882,6 +2601,7 @@
           ${a.deelVan ? sporenHtml(a, data) : ""}
           ${plek ? `<p class="plek">${plek}</p>` : ""}
           <p class="status status-${esc(a.status || "open")}">${esc(statusTekst(a))}</p>
+          ${vorigeParkenHtml(a)}
         </div>
         ${stempel}
       </header>
@@ -1898,8 +2618,8 @@
 
     const foto = $("#hoofdfoto");
     if (foto) foto.addEventListener("error", () => fotoMislukt(foto, () => {
-      foto.replaceWith(Object.assign(document.createElement("div"), { className: "foto-leeg" }));
-      $("#foto-bron")?.remove();
+      foto.replaceWith(Object.assign(document.createElement("div"), { className: "foto-leeg", innerHTML: illustratie(a, 640, 360) }));
+      $("#foto-bron").innerHTML = TEKENING_UITLEG;
     }));
 
     $("#terug").addEventListener("click", (e) => {
@@ -1919,6 +2639,7 @@
     }
     if (beheer) {
       koppelFotoBeheer(a, data, opnieuw);
+      $("[data-aanvullen]", vak)?.addEventListener("click", () => openAanvulVenster(a, data, opnieuw));
       $("[data-splits]", vak)?.addEventListener("click", (e) => openSplitsVenster(a, data, e.currentTarget.dataset.splits ? JSON.parse(e.currentTarget.dataset.splits) : null));
       $("[data-verberg]", vak)?.addEventListener("click", () => openVerbergVenster(a, data));
       $("[data-terugzetten]", vak)?.addEventListener("click", (e) => metKnop(e.currentTarget, null, "Bezig…", async () => {
@@ -1930,21 +2651,22 @@
     }
 
     if (wikidataVan(a)) {
-      onthoud(`wiki:${wikidataVan(a)}`, () => haalWikipedia(wikidataVan(a))).then((w) => {
+      onthoud(`wiki:${wikidataVan(a)}`, () => haalWikipedia(wikidataVan(a), a.wp)).then((w) => {
         if (!w || !w.tekst) return;
         const alineas = w.tekst.split(/\n+/).map((p) => p.trim()).filter(Boolean).slice(0, 3);
         $("#wiki").innerHTML = alineas.map((p) => `<p>${esc(p)}</p>`).join("") +
           `<p class="bron-klein">Bron: <a href="${w.url}">${w.taal === "nl" ? "Wikipedia" : "Engelstalige Wikipedia"}</a>, CC BY-SA.</p>`;
         $("#over").hidden = false;
         const links = $(".links");
-        if (links) links.insertAdjacentHTML("beforeend", `<li><a href="${w.url}">Wikipedia</a></li>`);
+        if (links && !(a.wp && a.wp[w.taal])) links.insertAdjacentHTML("beforeend", `<li><a href="${w.url}">Wikipedia</a></li>`);
       }).catch((e) => console.warn("Wikipedia niet bereikbaar", e));
     }
-    if (!eigenFoto && a.foto && !isEigenFoto(a.foto)) {
+    // Maker en licentie staan meestal al in de gegevens; anders vragen we ze aan Commons
+    if (!eigenFoto && a.foto && !isEigenFoto(a.foto) && !(a.fotoInfo && a.fotoInfo.licentie)) {
       onthoud(`foto:${a.foto}`, () => haalFotoInfo(a.foto)).then((info) => {
         const bron = $("#foto-bron");
-        if (!bron || (!info.maker && !info.licentie)) return;
-        bron.innerHTML = `Foto: ${esc(info.maker || "onbekende maker")}${info.licentie ? `, ${esc(info.licentie)}` : ""}, via <a href="${commonsPagina(a.foto)}">Wikimedia Commons</a>`;
+        if (!bron || !$("#hoofdfoto") || (!info.maker && !info.licentie)) return;
+        bron.innerHTML = commonsBijschrift(a.foto, info);
       }).catch((e) => console.warn("Commons niet bereikbaar", e));
     }
   }
@@ -2174,6 +2896,305 @@
     vulBoven();
     startOverzicht(data, vulBoven);
     if (data.bijgewerkt) $("#bijgewerkt").textContent = `, bijgewerkt op ${datum(data.bijgewerkt)}`;
+  }
+
+  /* ---------- Park- en landenpagina: wiens credits? ----------
+     ?wie=naam: die vriend. Anders: ingelogd jouw credits, en zonder inloggen die van de eigenaar. */
+  async function kiesPersoon(data) {
+    const wie = (params.get("wie") || "").trim().toLowerCase();
+    if (wie && sbAan && GEBRUIKERSNAAM.test(wie)) {
+      try {
+        const p = await haalProfiel({ gebruikersnaam: wie });
+        if (p) { zetPersoon(data, await laadPersoon(data, p)); return ik && ik.id === p.id ? "je" : p.weergavenaam; }
+      } catch (e) { console.warn(e); }
+    }
+    if (ik) {
+      try { zetPersoon(data, await laadPersoon(data, ik)); return "je"; } catch (e) { console.warn(e); toast(e.message, true); }
+    }
+    zetPersoon(data, await laadEigenaar(data));
+    return "ik";
+  }
+  // "Ik heb", "Je hebt" of "Anna heeft"
+  const heeftTekst = (wie) => (wie === "ik" ? "Ik heb" : wie === "je" ? "Je hebt" : `${wie} heeft`);
+
+  function fotoFoutenNaarTekening(vak, data) {
+    vak.addEventListener("error", (e) => {
+      if (e.target.tagName !== "IMG") return;
+      const plek = e.target.closest(".kaart-foto"), a = plek && data.perId.get(plek.dataset.id);
+      fotoMislukt(e.target, () => { if (a) plek.innerHTML = illustratie(a); else e.target.remove(); });
+    }, true);
+  }
+
+  /* ---------- Parkpagina: park.html?id=… ---------- */
+  async function startPark() {
+    const vak = $("#inhoud");
+    let id = params.get("id") || "";
+    let data;
+    try { data = await laadAlles(); } catch (e) { toonFout(vak, e); return; }
+    if (data.parkAliassen && data.parkAliassen[id]) id = data.parkAliassen[id];
+    const banen = data.lijst.filter((a) => parkSleutel(a) === id || (!a.parkId && a.park === id));
+    const zelfdeNaam = (v) => v.parkId ? v.parkId === id : v.park === id || v.park === banen[0]?.park;
+    const vroeger = data.lijst.filter((a) => !banen.includes(a) && (a.vorigeParken || []).some(zelfdeNaam));
+    if (!banen.length && !vroeger.length) {
+      vak.innerHTML = `<div class="melding"><h1>Dit park staat niet in de lijst</h1>
+        <p>Er is geen park met de code <code>${esc(id) || "(leeg)"}</code>.</p>
+        <p><a href="./#overzicht">Zoek in alle achtbanen</a></p></div>`;
+      return;
+    }
+    const wie = await kiesPersoon(data);
+    const naam = banen[0]?.park || vroeger[0].vorigeParken.find(zelfdeNaam).park;
+    const land = banen.find((a) => a.land)?.land || "";
+    document.title = `${naam} | ${SITE.naam}`;
+
+    const open = banen.filter((a) => a.status === "open").sort(opNaam);
+    const gepland = banen.filter((a) => a.status === "gepland").sort(opNaam);
+    const dicht = banen.filter((a) => a.status === "gesloten").sort((x, y) => (y.gesloten || 0) - (x.gesloten || 0) || opNaam(x, y));
+    const telt = [...open, ...dicht];
+    const gereden = telt.filter((a) => a.rit).length;
+    const deel = (titel, lijst, uitleg = "") => (lijst.length ? `<section class="blok park-deel">
+      <h2>${titel} <span class="aantal">${getal(lijst.length)}</span></h2>${uitleg}
+      <div class="raster">${lijst.map((a) => kaartHtml(a, null)).join("")}</div></section>` : "");
+    const jaren = (v) => (v.van || v.tot ? ` (${[v.van, v.tot].filter(Boolean).join("–")})` : "");
+    const links = [];
+    if (/^Q\d+$/.test(id)) links.push(`<a href="https://www.wikidata.org/wiki/${id}">Wikidata</a>`);
+    const osm = /^osm-(node|way|relation)-\d+$/.test(id) ? id.slice(4).replace("-", "/") : "";
+    if (osm) links.push(`<a href="https://www.openstreetmap.org/${osm}">OpenStreetMap</a>`);
+    links.push(`<a href="./?park=${encodeURIComponent(id)}#overzicht">In het overzicht, met filters</a>`);
+
+    vak.innerHTML = `
+      <nav class="terug" aria-label="Terug"><a href="./#overzicht">Alle achtbanen</a></nav>
+      <header class="titel park-kop">
+        <div>
+          <p class="bovenkop">Park</p>
+          <h1>${esc(naam)}</h1>
+          ${land ? `<p class="plek"><a href="./?land=${encodeURIComponent(land)}#overzicht">${esc(land)}</a></p>` : ""}
+        </div>
+        ${telt.length ? `<p class="park-teller"><strong>${getal(gereden)}</strong> van de ${getal(telt.length)} gereden</p>` : ""}
+      </header>
+      <p class="park-samenvatting">${[
+        open.length ? `${getal(open.length)} ${meervoud(open.length, "achtbaan", "achtbanen")} open` : "",
+        gepland.length ? `${getal(gepland.length)} op komst` : "",
+        dicht.length ? `${getal(dicht.length)} gesloten` : "",
+      ].filter(Boolean).join(", ")}. ${telt.length ? `${esc(heeftTekst(wie))} er ${getal(gereden)} gereden.` : ""}</p>
+      <section class="plaats park-plaats"><h2 class="sr">Kaart</h2><div class="minikaart park-kaart" id="parkkaart" role="region" aria-label="Kaart van ${esc(naam)}"></div></section>
+      ${deel("Open", open)}
+      ${deel("Komt nog", gepland)}
+      ${deel("Gesloten", dicht)}
+      ${vroeger.length ? `<section class="blok"><h2>Vroeger in dit park</h2><ul class="park-lijst">${vroeger.sort(opNaam).map((a) => {
+        const v = a.vorigeParken.find(zelfdeNaam);
+        return `<li><a href="${pagina(a)}">${esc(a.naam)}</a>${esc(jaren(v))}${a.park ? `, nu in <a href="${parkPagina(parkSleutel(a))}">${esc(a.park)}</a>` : ""}
+          ${a.rit ? '<span class="vink">✓ gereden</span>' : ""}</li>`;
+      }).join("")}</ul></section>` : ""}
+      <section class="blok bronnen"><h2>Meer over dit park</h2><ul class="links">${links.map((l) => `<li>${l}</li>`).join("")}</ul></section>`;
+    vak.querySelectorAll(".raster").forEach((r) => fotoFoutenNaarTekening(r, data));
+    tekenParkKaart(banen);
+  }
+
+  function tekenParkKaart(banen) {
+    const vak = $("#parkkaart");
+    const metPlek = banen.filter((a) => a.lat != null && a.lon != null);
+    if (!vak) return;
+    if (!metPlek.length || !window.L) { vak.closest("section").remove(); return; }
+    const kaart = L.map(vak, { scrollWheelZoom: false });
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(kaart);
+    const stijl = getComputedStyle(document.documentElement);
+    const rood = stijl.getPropertyValue("--rail").trim() || "#cf2236";
+    const grijs = stijl.getPropertyValue("--inkt-zacht").trim() || "#4b5a7a";
+    for (const a of metPlek) {
+      L.circleMarker([a.lat, a.lon], {
+        radius: 9, color: "#fff", weight: 2.5, fillColor: a.rit ? rood : grijs, fillOpacity: a.status === "gesloten" ? 0.45 : 1,
+      }).bindPopup(`<p class="popup-park"><a href="${pagina(a)}">${esc(a.naam)}</a></p><p class="popup-status">${esc(statusTekst(a))}${a.rit ? " · ✓ gereden" : ""}</p>`)
+        .bindTooltip(a.naam).addTo(kaart);
+    }
+    if (metPlek.length === 1) kaart.setView([metPlek[0].lat, metPlek[0].lon], 16);
+    else kaart.fitBounds(L.latLngBounds(metPlek.map((a) => [a.lat, a.lon])).pad(0.2), { maxZoom: 17 });
+  }
+
+  /* ---------- Landen: per land hoeveel achtbanen er zijn en hoeveel gereden ---------- */
+  async function startLanden() {
+    const vak = $("#inhoud");
+    let data;
+    try { data = await laadAlles(); } catch (e) { toonFout(vak, e); return; }
+    const wie = await kiesPersoon(data);
+    const perLand = new Map();
+    let zonderLand = 0;
+    for (const a of data.lijst) {
+      if (!a.land) { zonderLand++; continue; }
+      const x = perLand.get(a.land) || { land: a.land, n: 0, open: 0, telt: 0, gereden: 0 };
+      x.n++;
+      if (a.status === "open") x.open++;
+      if (a.status !== "gepland") x.telt++;
+      if (a.rit) x.gereden++;
+      perLand.set(a.land, x);
+    }
+    const landen = [...perLand.values()];
+    for (const x of landen) x.deel = x.telt ? x.gereden / x.telt : 0;
+    const metRit = landen.filter((x) => x.gereden).length;
+    const KOL = [
+      { k: "land", kop: "Land", tekst: true },
+      { k: "n", kop: "Achtbanen" },
+      { k: "open", kop: "Open" },
+      { k: "gereden", kop: "Gereden" },
+      { k: "deel", kop: "Deel gereden" },
+    ];
+    const st = { k: KOL.some((c) => c.k === params.get("sorteer")) ? params.get("sorteer") : "n", op: params.get("richting") === "op" };
+    const wiePar = params.get("wie") ? `&wie=${encodeURIComponent(params.get("wie"))}` : "";
+
+    function teken() {
+      const c = KOL.find((x) => x.k === st.k);
+      const r = st.op ? 1 : -1;
+      landen.sort((x, y) => (c.tekst ? r * x.land.localeCompare(y.land, TAAL) : r * (x[c.k] - y[c.k])) || y.n - x.n || x.land.localeCompare(y.land, TAAL));
+      const kop = KOL.map((k) => {
+        const richting = k.k === st.k ? (st.op ? "ascending" : "descending") : "";
+        return `<th scope="col"${richting ? ` aria-sort="${richting}"` : ""} class="${k.tekst ? "" : "getal"}${k.k === "open" ? " kol-open" : ""}"><button type="button" data-kolom="${k.k}">${k.kop}<span class="pijl" aria-hidden="true">${richting === "ascending" ? "▲" : richting === "descending" ? "▼" : ""}</span></button></th>`;
+      }).join("");
+      $("#landen-vak").innerHTML = `<div class="tabel-vak"><table class="tabel landen-tabel">
+        <caption class="sr">Achtbanen per land. Klik op een kolomkop om te sorteren.</caption>
+        <thead><tr>${kop}</tr></thead><tbody>${landen.map((x) => `<tr${x.gereden ? ' class="is-gereden"' : ""}>
+          <td class="naam"><a href="./?land=${encodeURIComponent(x.land)}#overzicht">${esc(x.land)}</a></td>
+          <td class="getal">${getal(x.n)}</td><td class="getal kol-open">${getal(x.open)}</td>
+          <td class="getal">${x.gereden ? `<a href="./?land=${encodeURIComponent(x.land)}&gereden=ja${wiePar}#overzicht">${getal(x.gereden)}</a>` : "0"}</td>
+          <td class="getal deel"><span class="balk" aria-hidden="true"><span style="width:${(x.deel * 100).toFixed(1)}%"></span></span>${x.gereden ? `${getal(x.deel * 100, x.deel < 0.1 ? 1 : 0)}%` : ""}</td>
+        </tr>`).join("")}</tbody></table></div>`;
+    }
+    vak.innerHTML = `
+      <div class="binnen landen">
+        <h1>Landen</h1>
+        <p class="intro">${getal(data.lijst.length - zonderLand)} achtbanen in ${getal(landen.length)} landen.
+          ${esc(heeftTekst(wie))} in ${getal(metRit)} ${meervoud(metRit, "land", "landen")} gereden.</p>
+        <div id="landen-vak"></div>
+        ${zonderLand ? `<p class="klein">Van ${getal(zonderLand)} ${meervoud(zonderLand, "achtbaan", "achtbanen")} is het land niet bekend.</p>` : ""}
+        <p class="klein">Gesloten achtbanen tellen mee bij het deel dat gereden is; achtbanen die nog moeten openen niet.</p>
+      </div>`;
+    teken();
+    $("#landen-vak").addEventListener("click", (e) => {
+      const knop = e.target.closest("[data-kolom]");
+      if (!knop) return;
+      const c = KOL.find((x) => x.k === knop.dataset.kolom);
+      st.op = st.k === c.k ? !st.op : !!c.tekst;
+      st.k = c.k;
+      teken();
+      const u = new URLSearchParams(location.search);
+      u.set("sorteer", st.k); u.set("richting", st.op ? "op" : "af");
+      history.replaceState(null, "", `${location.pathname}?${u}`);
+      $(`[data-kolom="${c.k}"]`)?.focus();
+    });
+  }
+
+  /* ---------- Beheer: ontbrekende gegevens ----------
+     Je eigen credits waar iets aan ontbreekt, zodat je ze kunt aanvullen. Onderaan het
+     kwaliteitsrapport van de laatste run (data/rapport.json). */
+  const ONTBREEKT = [
+    { k: "foto", naam: "Foto", mist: (a) => !heeftFoto(a) },
+    { k: "hoogte", naam: "Hoogte", mist: (a) => a.hoogte == null },
+    { k: "snelheid", naam: "Snelheid", mist: (a) => a.snelheid == null },
+    { k: "lengte", naam: "Lengte", mist: (a) => a.lengte == null },
+    { k: "inversies", naam: "Inversies", mist: (a) => a.inversies == null },
+    { k: "geopend", naam: "Openingsjaar", mist: (a) => !a.geopend },
+    { k: "fabrikant", naam: "Fabrikant", mist: (a) => !a.fabrikant },
+    { k: "type", naam: "Type", mist: (a) => !a.type || a.type === "Achtbaan" },
+    { k: "park", naam: "Park", mist: (a) => !a.park },
+    { k: "plek", naam: "Plek op de kaart", mist: (a) => a.lat == null || a.lon == null },
+  ];
+
+  async function startOntbrekend() {
+    const vak = $("#inhoud");
+    if (!beheer) {
+      vak.innerHTML = `<div class="melding"><h1>Alleen voor beheer</h1>
+        <p>Deze pagina is er alleen voor de eigenaar van de site. Plak eerst je token op de <a href="beheer.html">beheerpagina</a>.</p></div>`;
+      return;
+    }
+    let data, rapport = null;
+    try {
+      [data, rapport] = await Promise.all([laadAlles(), fetch(`data/rapport.json?v=${Date.now()}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)]);
+      zetPersoon(data, await laadEigenaar(data));
+    } catch (e) { toonFout(vak, e); return; }
+
+    const st = { k: params.get("mist") && ONTBREEKT.some((c) => c.k === params.get("mist")) ? params.get("mist") : "" };
+    vak.innerHTML = `
+      <header class="titel"><div>
+        <p class="bovenkop">Beheer</p>
+        <h1>Ontbrekende gegevens</h1>
+        <p class="plek">Je credits waar nog iets aan ontbreekt. Vul het aan met een bron (bijvoorbeeld een bordje bij de ingang of de site van het park): je aanvulling gaat voor op alle andere bronnen.</p>
+      </div></header>
+      <section class="blok" aria-labelledby="mist-titel">
+        <h2 id="mist-titel">Mijn credits</h2>
+        <p id="mist-samen"></p>
+        <div class="chips mist-keuze" id="mist-keuze" role="group" aria-label="Laat alleen zien wat mist"></div>
+        <div id="mist-lijst"></div>
+      </section>
+      <section class="blok" id="rapport" aria-labelledby="rapport-titel"></section>`;
+
+    function teken() {
+      const credits = [...new Set(data.gereden)].sort(opNaam);
+      const metGat = credits.map((a) => ({ a, mist: ONTBREEKT.filter((c) => c.mist(a)) })).filter((x) => x.mist.length);
+      const n = credits.length;
+      $("#mist-samen").textContent = n
+        ? `Van je ${getal(n)} ${meervoud(n, "credit", "credits")} ${metGat.length === 1 ? "mist bij één" : `missen bij ${getal(metGat.length)}`} nog gegevens.`
+        : "Je hebt nog geen credits.";
+      $("#mist-keuze").innerHTML = [["", `Alles (${getal(metGat.length)})`], ...ONTBREEKT.map((c) => [c.k, `${c.naam} (${getal(credits.filter(c.mist).length)})`])]
+        .map(([k, tekst]) => `<button type="button" class="chip${st.k === k ? " is-aan" : ""}" data-mist="${k}" aria-pressed="${st.k === k}">${esc(tekst)}</button>`).join("");
+      const rijen = metGat.filter((x) => !st.k || x.mist.some((c) => c.k === st.k))
+        .sort((x, y) => y.mist.length - x.mist.length || opNaam(x.a, y.a));
+      $("#mist-lijst").innerHTML = rijen.length ? `<div class="tabel-vak"><table class="tabel mist-tabel">
+        <caption class="sr">Credits met ontbrekende gegevens</caption>
+        <thead><tr><th scope="col">Achtbaan</th><th scope="col">Park</th><th scope="col">Wat mist</th><th scope="col"><span class="sr">Aanvullen</span></th></tr></thead>
+        <tbody>${rijen.map(({ a, mist }) => `<tr>
+          <td class="naam"><a href="${pagina(a)}">${esc(a.naam)}</a></td>
+          <td>${a.park ? `<a href="${parkPagina(parkSleutel(a))}">${esc(a.park)}</a>` : ""}</td>
+          <td class="mist">${mist.map((c) => `<span class="mist-label${c.k === st.k ? " is-aan" : ""}">${esc(c.naam)}</span>`).join(" ")}</td>
+          <td class="acties">${mist.some((c) => !["foto", "park", "plek"].includes(c.k)) ? `<button type="button" class="knop-klein" data-aanvul="${esc(a.id)}">Aanvullen</button>` : ""}
+            ${mist.some((c) => c.k === "foto") ? `<a class="knop-klein" href="${pagina(a)}#beheer">Foto</a>` : ""}</td>
+        </tr>`).join("")}</tbody></table></div>` : `<p>${st.k ? "Bij geen van je credits mist dit." : "Alles is compleet. Mooi!"}</p>`;
+    }
+
+    vak.addEventListener("click", async (e) => {
+      const keuze = e.target.closest("[data-mist]");
+      if (keuze) {
+        st.k = keuze.dataset.mist;
+        const u = new URLSearchParams(location.search);
+        if (st.k) u.set("mist", st.k); else u.delete("mist");
+        history.replaceState(null, "", `${location.pathname}${u.toString() ? `?${u}` : ""}`);
+        teken();
+        $(`[data-mist="${st.k}"]`)?.focus();
+        return;
+      }
+      const knop = e.target.closest("[data-aanvul]");
+      if (!knop) return;
+      const a = data.perId.get(knop.dataset.aanvul);
+      if (!a) return;
+      try { await haalDetails(data, a); } catch (fout) { console.warn(fout); }
+      openAanvulVenster(a, data, () => { teken(); toast(`Gegevens van ${a.naam} opgeslagen.`, true); });
+    });
+    teken();
+    tekenRapport($("#rapport"), rapport);
+  }
+
+  function tekenRapport(vak, r) {
+    if (!r || !r.velden) {
+      vak.innerHTML = `<h2 id="rapport-titel">Alle achtbanen</h2><p>Er is nog geen kwaliteitsrapport. Dat komt na de volgende run van het script (op GitHub: Actions).</p>`;
+      return;
+    }
+    const st = r.perStatus || {};
+    const pct = (x) => (x == null ? "" : `${getal(x, 1)}%`);
+    vak.innerHTML = `
+      <h2 id="rapport-titel">Alle achtbanen</h2>
+      <p>Na de laatste run${r.bijgewerkt ? ` (${esc(datum(r.bijgewerkt))})` : ""}: ${getal(r.totaal)} achtbanen
+        (${getal(st.open || 0)} open, ${getal(st.gesloten || 0)} gesloten, ${getal(st.gepland || 0)} op komst) in ${getal(r.landen)} landen.</p>
+      <div class="tabel-vak"><table class="tabel rapport-tabel">
+        <caption class="sr">Hoeveel achtbanen elk gegeven hebben</caption>
+        <thead><tr><th scope="col">Gegeven</th><th scope="col" class="getal">Aantal</th><th scope="col" class="getal">Van alle banen</th>
+          <th scope="col" class="getal kol-extra">Van de open banen</th><th scope="col" class="getal kol-extra">Vorige keer</th></tr></thead>
+        <tbody>${Object.values(r.velden).map((v) => `<tr>
+          <td>${esc(v.naam)}</td><td class="getal">${getal(v.aantal)}</td>
+          <td class="getal deel"><span class="balk" aria-hidden="true"><span style="width:${Number(v.procent) || 0}%"></span></span>${pct(v.procent)}</td>
+          <td class="getal kol-extra">${pct(v.procentOpen)}</td><td class="getal kol-extra">${pct(v.vorige)}</td></tr>`).join("")}</tbody>
+      </table></div>
+      ${r.fotos ? `<p class="klein">Foto's: ${getal(r.fotos.liggend || 0)} liggende foto's van de baan zelf, ${getal(r.fotos.tweedeKeus || 0)} tweede keus (staand, bouw, station of treintje).</p>` : ""}
+      ${(r.meldingen || []).length ? `<div class="mijn-rit rapport-let-op"><p><strong>Let op</strong></p><ul>${r.meldingen.map((m) => `<li>${esc(m)}</li>`).join("")}</ul></div>` : ""}`;
   }
 
   /* ---------- Ranglijst op de startpagina ---------- */
@@ -2576,7 +3597,7 @@
 
   /* ---------- Starten ---------- */
   document.querySelectorAll("[data-sitenaam]").forEach((el) => { el.textContent = SITE.naam; });
-  if (["home", "achtbaan", "profiel", "vergelijk"].includes(PAGINA)) laadAlles().catch(() => { /* de pagina toont de fout */ });
+  if (["home", "achtbaan", "profiel", "vergelijk", "park", "landen"].includes(PAGINA)) laadAlles().catch(() => { /* de pagina toont de fout */ });
   (async () => {
     if (!(await startAccount())) return;
     if (sessie) sessieOpslag.wis(LOGIN_ADRES);
@@ -2590,5 +3611,8 @@
     if (PAGINA === "account") startAccountPagina();
     if (PAGINA === "profiel") startProfiel();
     if (PAGINA === "vergelijk") startVergelijk();
+    if (PAGINA === "park") startPark();
+    if (PAGINA === "landen") startLanden();
+    if (PAGINA === "ontbrekend") startOntbrekend();
   })();
 })();

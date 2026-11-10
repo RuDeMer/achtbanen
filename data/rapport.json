@@ -1,0 +1,137 @@
+{
+ "uitleg": "Kwaliteit van de gegevens na de laatste run van scripts/haal_achtbanen.py. procent: van alle achtbanen; procentOpen: van de achtbanen die open zijn; vorige: procent van de run daarvoor.",
+ "bijgewerkt": "2026-11-10",
+ "totaal": 2120,
+ "perStatus": {
+  "gesloten": 305,
+  "open": 1807,
+  "gepland": 8
+ },
+ "landen": 55,
+ "parken": 657,
+ "velden": {
+  "foto": {
+   "naam": "Foto",
+   "aantal": 1320,
+   "procent": 62.3,
+   "procentOpen": 59.0,
+   "vorige": 62.3
+  },
+  "park": {
+   "naam": "Park",
+   "aantal": 2056,
+   "procent": 97.0,
+   "procentOpen": 96.8,
+   "vorige": 97.0
+  },
+  "land": {
+   "naam": "Land",
+   "aantal": 1968,
+   "procent": 92.8,
+   "procentOpen": 91.6,
+   "vorige": 92.8
+  },
+  "plek": {
+   "naam": "Plek op de kaart",
+   "aantal": 1932,
+   "procent": 91.1,
+   "procentOpen": 92.9,
+   "vorige": 91.1
+  },
+  "geopend": {
+   "naam": "Openingsjaar",
+   "aantal": 1242,
+   "procent": 58.6,
+   "procentOpen": 51.8,
+   "vorige": 58.6
+  },
+  "type": {
+   "naam": "Type (niet alleen 'Achtbaan')",
+   "aantal": 1283,
+   "procent": 60.5,
+   "procentOpen": 54.3,
+   "vorige": 60.5
+  },
+  "fabrikant": {
+   "naam": "Fabrikant",
+   "aantal": 1240,
+   "procent": 58.5,
+   "procentOpen": 53.1,
+   "vorige": 58.5
+  },
+  "model": {
+   "naam": "Model",
+   "aantal": 903,
+   "procent": 42.6,
+   "procentOpen": 38.7,
+   "vorige": 42.6
+  },
+  "hoogte": {
+   "naam": "Hoogte",
+   "aantal": 1126,
+   "procent": 53.1,
+   "procentOpen": 48.0,
+   "vorige": 53.1
+  },
+  "valhoogte": {
+   "naam": "Valhoogte",
+   "aantal": 495,
+   "procent": 23.3,
+   "procentOpen": 21.1,
+   "vorige": 23.3
+  },
+  "lengte": {
+   "naam": "Lengte",
+   "aantal": 1113,
+   "procent": 52.5,
+   "procentOpen": 47.6,
+   "vorige": 52.5
+  },
+  "snelheid": {
+   "naam": "Topsnelheid",
+   "aantal": 1060,
+   "procent": 50.0,
+   "procentOpen": 45.9,
+   "vorige": 50.0
+  },
+  "inversies": {
+   "naam": "Inversies",
+   "aantal": 1082,
+   "procent": 51.0,
+   "procentOpen": 45.9,
+   "vorige": 51.0
+  },
+  "duur": {
+   "naam": "Ritduur",
+   "aantal": 869,
+   "procent": 41.0,
+   "procentOpen": 36.9,
+   "vorige": 41.0
+  }
+ },
+ "fotos": {
+  "liggend": 1205,
+  "tweedeKeus": 115,
+  "perBron": {
+   "p18": 794,
+   "categorie": 272,
+   "wikipedia": 93,
+   "zoeken": 20,
+   "vorige": 141
+  }
+ },
+ "bronnen": {
+  "wd": 6168,
+  "wp:en": 6008,
+  "wp:de": 1467,
+  "wp:nl": 1356,
+  "osm": 868,
+  "plek": 7,
+  "park": 5
+ },
+ "meldingen": [
+  "OpenStreetMap was niet bereikbaar. De 759 achtbanen uit OpenStreetMap van de vorige keer zijn gebleven.",
+  "Zoeken naar foto's op Commons stopte na de tijdslimiet; 69 banen zonder foto komen de volgende keer aan de beurt.",
+  "12 banen liggen ver van de andere banen in hun park, of noemen een ander land. Misschien klopt het park niet, of de plek in Wikidata (vaak bij verhuisde banen)."
+ ]
+}

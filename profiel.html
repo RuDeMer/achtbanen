@@ -30,6 +30,7 @@
     <a class="logo" href="./" data-sitenaam>Rubens Achtbanen</a>
     <nav aria-label="Hoofdmenu">
       <a href="./#kaart-sectie">Kaart</a>
+      <a href="landen.html">Landen</a>
       <a href="./#overzicht">Alle achtbanen</a>
     </nav>
   </header>
@@ -67,39 +68,88 @@
         <p class="aantal-resultaten" id="resultaten-tekst" aria-live="polite">Achtbanen laden…</p>
       </div>
 
-      <div class="filters" role="search">
-        <label class="zoekveld">
-          <span class="sr">Zoeken</span>
-          <input id="zoek" type="search" placeholder="Zoek op achtbaan, park, land of fabrikant" autocomplete="off">
+      <div class="zoekbalk" role="search">
+        <div class="zoekveld">
+          <label class="sr" for="zoek">Zoeken</label>
+          <input id="zoek" type="search" placeholder="Zoek op achtbaan, park, land of fabrikant" autocomplete="off" spellcheck="false"
+            role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggesties">
+          <ul class="suggesties" id="suggesties" role="listbox" aria-label="Suggesties" hidden></ul>
+        </div>
+        <button class="filter-knop" type="button" id="filter-open" aria-controls="filter-paneel" aria-expanded="false">Filters<span class="filter-aantal" id="filter-aantal"></span></button>
+        <label class="sorteer-veld">Sorteren
+          <select id="sorteer"></select>
         </label>
-        <label>Land
-          <select id="land"><option value="">Alle landen</option></select>
-        </label>
-        <label>Status
-          <select id="status">
-            <option value="">Alles</option>
-            <option value="open">Open</option>
-            <option value="gesloten">Gesloten</option>
-            <option value="gepland">Komt nog</option>
-          </select>
-        </label>
-        <label id="door-veld" hidden>Gereden door
-          <select id="door"><option value="">Maakt niet uit</option></select>
-        </label>
-        <label>Sorteren
-          <select id="sorteer">
-            <option value="naam">Op naam</option>
-            <option value="nieuw">Nieuwste eerst</option>
-            <option value="oud">Oudste eerst</option>
-            <option value="hoog">Hoogste eerst</option>
-            <option value="snel">Snelste eerst</option>
-            <option value="rit">Laatst gereden</option>
-          </select>
-        </label>
-        <label class="vinkje"><input type="checkbox" id="alleen-gereden"> Alleen gereden</label>
+        <div class="weergave" role="group" aria-label="Weergave">
+          <button type="button" data-weergave="kaartjes" aria-pressed="true">Kaartjes</button>
+          <button type="button" data-weergave="lijst" aria-pressed="false">Lijst</button>
+          <button type="button" data-weergave="tabel" aria-pressed="false">Tabel</button>
+        </div>
       </div>
 
-      <div id="park-filter"></div>
+      <div class="paneel-achter" id="paneel-achter" hidden></div>
+      <div class="filter-paneel" id="filter-paneel" aria-label="Filters">
+        <div class="paneel-kop">
+          <h3 id="paneel-titel">Filters</h3>
+          <button class="paneel-dicht" type="button" id="filter-dicht"><span aria-hidden="true">×</span><span class="sr">Filters sluiten</span></button>
+        </div>
+        <div class="filter-velden">
+          <label>Land <select id="land"><option value="">Alle landen</option></select></label>
+          <label>Park <select id="park"><option value="">Alle parken</option></select></label>
+          <label>Fabrikant <select id="fabrikant"><option value="">Alle fabrikanten</option></select></label>
+          <label>Type <select id="type"><option value="">Alle types</option></select></label>
+          <label>Status
+            <select id="status">
+              <option value="">Alles</option>
+              <option value="open">Open</option>
+              <option value="gesloten">Gesloten</option>
+              <option value="gepland">Komt nog</option>
+            </select>
+          </label>
+          <label>Gereden
+            <select id="gereden">
+              <option value="">Maakt niet uit</option>
+              <option value="ja">Gereden</option>
+              <option value="nee">Nog niet gereden</option>
+            </select>
+          </label>
+          <label id="door-veld" hidden>Vriend
+            <select id="door"><option value="">Maakt niet uit</option></select>
+          </label>
+          <fieldset class="bereik">
+            <legend>Hoogte (m)</legend>
+            <div class="bereik-velden"><input id="hoogte-van" type="number" inputmode="decimal" min="0" step="any" placeholder="van" aria-label="Hoogte vanaf (m)"><span aria-hidden="true">–</span><input id="hoogte-tot" type="number" inputmode="decimal" min="0" step="any" placeholder="tot" aria-label="Hoogte tot en met (m)"></div>
+          </fieldset>
+          <fieldset class="bereik">
+            <legend>Snelheid (km/u)</legend>
+            <div class="bereik-velden"><input id="snelheid-van" type="number" inputmode="decimal" min="0" step="any" placeholder="van" aria-label="Snelheid vanaf (km/u)"><span aria-hidden="true">–</span><input id="snelheid-tot" type="number" inputmode="decimal" min="0" step="any" placeholder="tot" aria-label="Snelheid tot en met (km/u)"></div>
+          </fieldset>
+          <fieldset class="bereik">
+            <legend>Geopend (jaar)</legend>
+            <div class="bereik-velden"><input id="jaar-van" type="number" inputmode="numeric" min="1800" step="1" placeholder="van" aria-label="Geopend vanaf (jaar)"><span aria-hidden="true">–</span><input id="jaar-tot" type="number" inputmode="numeric" min="1800" step="1" placeholder="tot" aria-label="Geopend tot en met (jaar)"></div>
+          </fieldset>
+          <label>Inversies
+            <select id="inversies">
+              <option value="">Maakt niet uit</option>
+              <option value="ja">Met inversies</option>
+              <option value="nee">Zonder inversies</option>
+            </select>
+          </label>
+          <label>Foto
+            <select id="foto">
+              <option value="">Maakt niet uit</option>
+              <option value="ja">Met foto</option>
+              <option value="nee">Zonder foto</option>
+            </select>
+          </label>
+        </div>
+        <div class="paneel-voet">
+          <button class="knop knop-licht" type="button" id="paneel-wis">Alles wissen</button>
+          <button class="knop" type="button" id="paneel-toon">Toon resultaten</button>
+        </div>
+      </div>
+
+      <div class="chips" id="chips" role="group" aria-label="Actieve filters"></div>
+      <p class="filter-hint" id="filter-hint" hidden></p>
       <div class="raster" id="raster"></div>
       <button class="meer" id="meer" type="button" hidden>Toon meer</button>
     </section>
