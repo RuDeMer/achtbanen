@@ -286,6 +286,15 @@ class PlekBijPark(unittest.TestCase):
         self.assertNotIn("_punten", verhuisd)
         self.assertEqual(verhuisd["bron"]["land"], "park")
 
+    def test_land_bij_de_plek(self):
+        from collections import defaultdict
+        buren = [{"id": f"Q{i}", "naam": f"B{i}", "land": "Verenigde Staten", "lat": 40.13 + i / 100, "lon": -74.44} for i in range(2)]
+        baan = {"id": "Qd", "naam": "Dark Knight", "land": "Mexico", "_landen": ["Mexico", "Verenigde Staten"], "lat": 40.1364, "lon": -74.4426}
+        tel = defaultdict(int)
+        h.plek_bij_park(buren + [baan], tel)
+        self.assertEqual(baan["land"], "Verenigde Staten")
+        self.assertNotIn("_landen", baan)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

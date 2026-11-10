@@ -1510,14 +1510,31 @@ def plek_bij_park(alle, tel):
                 continue
             in_park = midden is not None and a.get("lat") is not None and afstand(a["lat"], a["lon"], *midden) <= 15_000
             if park_land in (a.get("_landen") or []) or in_park:
+                if a.get("_land_beslist") and park_land not in (a.get("_landen") or []):
+                    continue  # het land van het park in Wikidata gaat voor
                 a["land"] = park_land
+                a["_land_beslist"] = True
                 a.setdefault("bron", {})["land"] = "park"
                 tel["land_bij_park"] += 1
             elif a.get("land"):
                 tel["plek_twijfel"] += 1
+    # Nog meer landen en niets dat beslist: het land van de banen bij de plek van deze baan
+    rooster = defaultdict(list)
+    for b in alle:
+        if b.get("land") and b.get("lat") is not None and not b.get("_landen"):
+            rooster[(int(b["lat"] * 2), int(b["lon"] * 2))].append(b)
+    for a in alle:
+        if a.get("_landen") and not a.get("_land_beslist") and a.get("lat") is not None:
+            vak = (int(a["lat"] * 2), int(a["lon"] * 2))
+            buren = Counter(b["land"] for di in (-1, 0, 1) for dj in (-1, 0, 1) for b in rooster.get((vak[0] + di, vak[1] + dj), [])
+                            if b["land"] in a["_landen"] and afstand(a["lat"], a["lon"], b["lat"], b["lon"]) <= 40_000)
+            if buren:
+                a["land"] = buren.most_common(1)[0][0]
+                tel["land_bij_plek"] += 1
     for a in alle:
         a.pop("_punten", None)
         a.pop("_landen", None)
+        a.pop("_land_beslist", None)
 
 
 def land_uit_plek(alle, tel):
@@ -2119,6 +2136,20 @@ def bouw(vorige, tel):
     naam, alle_namen = haal_namen(alle_q)
 
     wd = maak_wikidata_lijst(basis, cijfers, wd_extra, wd_plekken, wd_parken, naam, alle_namen)
+    # Verhuisde banen met meer landen: het land van het park (P17 van het park), als dat erbij zit
+    meer = [a for a in wd if a.get("_landen") and str(a.get("parkId") or "").startswith("Q")]
+    if meer:
+        try:
+            landen_van_park = haal_landen({a["parkId"] for a in meer})
+        except Exception as fout:  # noqa: BLE001
+            print(f"  Landen van parken niet opgehaald: {fout}")
+            landen_van_park = {}
+        for a in meer:
+            land = norm.land(naam.get(landen_van_park.get(a["parkId"])))
+            if land and land in a["_landen"]:
+                a["land"] = land
+                a["_land_beslist"] = True
+                tel["land_van_park"] += 1
     for a in wd:
         if a["id"] in splitsen:  # OSM-sporen met deze namen horen bij deze baan
             a["_namen"] = a["_namen"] | set(splitsen[a["id"]])
