@@ -250,6 +250,98 @@
     return tekst == null ? null : leesJsonTekst(tekst, pad);
   }
 
+  /* ---------- Accounts en credits van iedereen (Supabase) ----------
+     Inloggen gaat met een link per e-mail, zonder wachtwoord. Alleen wie is
+     uitgenodigd heeft een account. In config.js staat alleen de publieke sleutel;
+     de database zelf (row level security) zorgt dat iedereen alleen zijn eigen
+     gegevens kan wijzigen. Staat Supabase niet in config.js, dan werkt de site
+     zoals vroeger met data/gereden.json. */
+  const sbAan = !!(window.supabase && /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(SITE.supabaseUrl || "") &&
+    /^(sb_publishable_|eyJ)/.test(SITE.supabaseSleutel || ""));
+  if (/^sb_secret_/.test(SITE.supabaseSleutel || "")) console.error("In config.js staat een GEHEIME sleutel. Haal hem meteen weg en maak in Supabase een nieuwe aan.");
+
+  // Kwam je binnen via een verlopen of al gebruikte link? Dat staat in het adres.
+  // Eerst bewaren, want daarna ruimt de site het adres op.
+  const adresHash = new URLSearchParams(location.hash.slice(1));
+  const LOGIN_MELDING = "achtbanen-login-melding";
+  if (adresHash.get("error_code") || adresHash.get("error_description")) {
+    const verlopen = /expired|invalid/i.test(adresHash.get("error_code") + adresHash.get("error_description"));
+    try {
+      sessionStorage.setItem(LOGIN_MELDING, verlopen
+        ? "Deze inloglink is verlopen of al gebruikt. Vraag hieronder een nieuwe aan. Tip: een link werkt maar één keer en een uur lang."
+        : `Inloggen lukte niet: ${adresHash.get("error_description") || adresHash.get("error_code")}.`);
+    } catch (e) { /* geen opslag */ }
+    history.replaceState(null, "", location.pathname + location.search);
+    if (PAGINA !== "account") { location.replace("account.html"); return; }
+  }
+  const welkeLink = adresHash.get("type"); // magiclink of invite
+
+  const sb = sbAan ? window.supabase.createClient(SITE.supabaseUrl.replace(/\/$/, ""), SITE.supabaseSleutel, {
+    auth: { storageKey: "achtbanen-sessie", flowType: "implicit", detectSessionInUrl: true, persistSession: true, autoRefreshToken: true },
+  }) : null;
+
+  let sessie = null; // ingelogd? (van Supabase)
+  let ik = null;     // je eigen profiel: { id, gebruikersnaam, weergavenaam, in_ranglijst }
+
+  const PROFIEL_VELDEN = "id,gebruikersnaam,weergavenaam,in_ranglijst";
+  const GEBRUIKERSNAAM = /^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$/;
+  // Tekst van gebruikers: geen onzichtbare tekens, geen dubbele spaties
+  const netteTekst = (s) => String(s ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069]/g, "").replace(/\s+/g, " ").trim();
+
+  function metTijd(vraag) {
+    return typeof AbortSignal !== "undefined" && AbortSignal.timeout ? vraag.abortSignal(AbortSignal.timeout(20000)) : vraag;
+  }
+
+  // Een fout van Supabase in gewone taal
+  function sbFout(e, wat) {
+    const code = String(e.code || e.error_code || "");
+    const bericht = String(e.message || e.msg || "");
+    let tekst;
+    if (code === "23505" && /gebruikersnaam/.test(bericht)) tekst = "Deze gebruikersnaam is al bezet. Kies een andere.";
+    else if (code === "23505" && /profielen_pkey/.test(bericht)) tekst = "Je hebt al een profiel. Laad de pagina opnieuw.";
+    else if (code === "23514" || code === "22P02" || code === "22003") tekst = "Een van de velden klopt niet. Controleer wat je hebt ingevuld.";
+    else if (code === "23503") tekst = "Maak eerst je profiel op de accountpagina.";
+    else if (code === "P0001") tekst = bericht;
+    else if (code === "42501" || e.status === 401 || /^PGRST30/.test(code) || /jwt/i.test(bericht)) tekst = "Je bent niet (meer) ingelogd. Log opnieuw in op de accountpagina.";
+    else if (e.status === 429 || /rate_limit/.test(code)) tekst = "Even te veel verzoeken. Wacht een minuut en probeer het dan opnieuw.";
+    else if (/fetch|network|load failed|abort|timeout/i.test(bericht) || e.name === "AbortError" || e.name === "TimeoutError") {
+      tekst = "De accounts zijn nu niet bereikbaar. Is je internet weg? Of de database staat even op pauze; probeer het later nog eens.";
+    } else tekst = bericht || "Onbekende fout.";
+    return Object.assign(new Error(wat ? `${wat}: ${tekst}` : tekst), { code, status: e.status });
+  }
+
+  async function sbVraag(vraag, wat) {
+    let r;
+    try { r = await vraag; } catch (e) { throw sbFout(e, wat); }
+    if (r.error) throw sbFout(r.error, wat);
+    return r.data;
+  }
+
+  async function haalProfiel(waar) {
+    let q = sb.from("profielen").select(PROFIEL_VELDEN);
+    q = waar.id ? q.eq("id", waar.id) : q.eq("gebruikersnaam", String(waar.gebruikersnaam || "").toLowerCase());
+    return sbVraag(metTijd(q).maybeSingle(), "Profiel ophalen");
+  }
+
+  let accountFout = "";
+  async function startAccount() {
+    if (!sb) return true;
+    try {
+      const { data } = await sb.auth.getSession();
+      sessie = data.session || null;
+      if (sessie) ik = await haalProfiel({ id: sessie.user.id });
+    } catch (e) {
+      console.warn(e);
+      accountFout = e.message;
+    }
+    // Net binnen via een uitnodiging of een link, maar nog geen profiel: eerst een naam kiezen
+    if (sessie && !ik && !accountFout && !["account", "privacy"].includes(PAGINA)) {
+      location.replace("account.html");
+      return false;
+    }
+    return true;
+  }
+
   /* ---------- Gegevens laden ---------- */
 
   async function haalJson(pad, verplicht) {
@@ -1684,12 +1776,219 @@
     teken();
   }
 
+  /* ---------- Accountpagina: inloggen, profiel, uitloggen ---------- */
+
+  const sessieOpslag = {
+    lees(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+    zet(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* geen opslag */ } },
+    wis(k) { try { sessionStorage.removeItem(k); } catch (e) { /* geen opslag */ } },
+  };
+  const LOGIN_ADRES = "achtbanen-login-adres"; // alleen in dit tabblad, voor de code uit de mail
+  const profielLink = (p) => new URL(`profiel.html?wie=${encodeURIComponent(p.gebruikersnaam)}`, location.href).href;
+  const naarGebruikersnaam = (s) => slug(s).slice(0, 24).replace(/-+$/, "");
+
+  function startAccountPagina() {
+    const vak = $("#account-vak");
+    if (!sbAan) {
+      vak.innerHTML = `<p><strong>Accounts staan nog niet aan op deze site.</strong></p>
+        <p class="klein">Ben jij de eigenaar? Vul <code>supabaseUrl</code> en <code>supabaseSleutel</code> in bij <code>config.js</code>. Hoe dat gaat, staat in de README.</p>`;
+      return;
+    }
+    const melding = sessieOpslag.lees(LOGIN_MELDING) || "";
+    sessieOpslag.wis(LOGIN_MELDING);
+    if (accountFout) {
+      vak.innerHTML = `<p class="fout">${esc(accountFout)}</p>
+        <div class="knoppen"><button class="knop" type="button" id="opnieuw">Opnieuw proberen</button></div>`;
+      $("#opnieuw").addEventListener("click", () => location.reload());
+      return;
+    }
+    if (!sessie) { tekenInloggen(vak, melding); return; }
+    if (!ik) { tekenNieuwProfiel(vak); return; }
+    tekenAccount(vak);
+  }
+
+  function tekenInloggen(vak, melding) {
+    const adres = sessieOpslag.lees(LOGIN_ADRES) || "";
+    vak.innerHTML = `
+      ${melding ? `<p class="fout">${esc(melding)}</p>` : ""}
+      <div id="login-stap1"${adres ? " hidden" : ""}>
+        <p><strong>Inloggen gaat zonder wachtwoord.</strong> Vul je e-mailadres in. Je krijgt een mail met een link: tik erop en je bent ingelogd op het apparaat waar je hem opent.</p>
+        <form class="formulier" id="login-form" novalidate>
+          <label>Je e-mailadres <input type="email" id="login-email" autocomplete="email" inputmode="email" maxlength="254" required value="${esc(adres)}"></label>
+          <p class="fout" id="login-fout" role="alert"></p>
+          <div class="knoppen"><button class="knop" type="submit" id="login-knop">Stuur me een inloglink</button></div>
+        </form>
+        <p class="klein">Alleen wie een uitnodiging heeft gekregen, kan inloggen. Je e-mailadres wordt alleen gebruikt om in te loggen en staat nergens op de site.</p>
+      </div>
+      <div id="login-stap2"${adres ? "" : " hidden"}>
+        <p class="goed">Kijk in je mail. Tik op de link in de mail om in te loggen.</p>
+        <p class="klein">Geen mail binnen een paar minuten? Kijk bij je spam en controleer of je het adres goed hebt getypt. Heb je nog geen uitnodiging, vraag er dan om.</p>
+        <form class="formulier" id="code-form" novalidate>
+          <label>Staat er een code van 6 cijfers in de mail? Dan kan het ook zo: <input type="text" id="login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456"></label>
+          <p class="fout" id="code-fout" role="alert"></p>
+          <div class="knoppen">
+            <button class="knop" type="submit" id="code-knop">Inloggen met de code</button>
+            <button class="knop knop-licht" type="button" id="login-anders">Ander e-mailadres</button>
+          </div>
+        </form>
+      </div>`;
+
+    $("#login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = $("#login-email").value.trim();
+      const fout = $("#login-fout");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) { fout.textContent = "Vul je e-mailadres in, bijvoorbeeld naam@voorbeeld.nl."; return; }
+      const gelukt = await metKnop($("#login-knop"), fout, "Versturen…", async () => {
+        const { error } = await sb.auth.signInWithOtp({
+          email,
+          options: { shouldCreateUser: false, emailRedirectTo: new URL("account.html", location.href).href },
+        });
+        // Een adres zonder uitnodiging krijgt hetzelfde bericht als een bekend adres,
+        // zodat niemand kan uitproberen wie er een account heeft.
+        if (error && !/otp_disabled|signup_disabled|user_not_found/.test(String(error.code || "")) && !/signups not allowed/i.test(error.message || "")) {
+          throw sbFout(error, "Versturen lukte niet");
+        }
+      });
+      if (!gelukt) return;
+      sessieOpslag.zet(LOGIN_ADRES, email);
+      $("#login-stap1").hidden = true;
+      $("#login-stap2").hidden = false;
+      $("#login-code").focus();
+    });
+
+    $("#code-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const code = $("#login-code").value.replace(/\s/g, "");
+      const fout = $("#code-fout");
+      if (!/^\d{6}$/.test(code)) { fout.textContent = "De code bestaat uit 6 cijfers."; return; }
+      const gelukt = await metKnop($("#code-knop"), fout, "Controleren…", async () => {
+        const { error } = await sb.auth.verifyOtp({ email: sessieOpslag.lees(LOGIN_ADRES) || "", token: code, type: "email" });
+        if (error) throw /expired|invalid/i.test(`${error.code} ${error.message}`) ? new Error("Deze code klopt niet of is verlopen. Vraag een nieuwe aan.") : sbFout(error);
+      });
+      if (!gelukt) return;
+      sessieOpslag.wis(LOGIN_ADRES);
+      location.replace("account.html");
+    });
+
+    $("#login-anders").addEventListener("click", () => {
+      sessieOpslag.wis(LOGIN_ADRES);
+      $("#login-stap2").hidden = true;
+      $("#login-stap1").hidden = false;
+      $("#login-email").focus();
+    });
+  }
+
+  function profielVeldenHtml(p, nieuw) {
+    return `
+      <label>Je naam op de site <input type="text" id="p-naam" maxlength="40" required autocomplete="nickname" placeholder="Bijvoorbeeld Anna" value="${esc(p.weergavenaam || "")}"></label>
+      <label>Gebruikersnaam voor je link <input type="text" id="p-gebruiker" maxlength="24" required autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="anna" value="${esc(p.gebruikersnaam || "")}"></label>
+      <p class="klein link-voorbeeld">3 tot 24 tekens: kleine letters, cijfers en streepjes. Je link wordt <code id="p-link"></code></p>
+      <label class="vinkje"><input type="checkbox" id="p-ranglijst"${p.in_ranglijst === false ? "" : " checked"}> Laat mij zien in de ranglijst en bij "Ook gereden door"</label>
+      <p class="klein">Zet je dit uit, dan sta je daar niet tussen. Je profiel is dan alleen te vinden met je eigen link.</p>
+      <p class="fout" id="p-fout" role="alert"></p>
+      <div class="knoppen"><button class="knop" type="submit" id="p-opslaan">${nieuw ? "Profiel maken" : "Wijzigingen opslaan"}</button></div>`;
+  }
+
+  // Leest en controleert het profielformulier; zelfde regels als in de database
+  function koppelProfielFormulier(form, nieuw, opslaan) {
+    const naam = $("#p-naam", form), gebruiker = $("#p-gebruiker", form), link = $("#p-link", form);
+    let zelfGekozen = !nieuw;
+    const toonLink = () => { link.textContent = profielLink({ gebruikersnaam: gebruiker.value.trim().toLowerCase() || "…" }); };
+    naam.addEventListener("input", () => { if (!zelfGekozen) { gebruiker.value = naarGebruikersnaam(naam.value); toonLink(); } });
+    gebruiker.addEventListener("input", () => { zelfGekozen = true; toonLink(); });
+    toonLink();
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fout = $("#p-fout", form);
+      const p = {
+        weergavenaam: netteTekst(naam.value),
+        gebruikersnaam: gebruiker.value.trim().toLowerCase(),
+        in_ranglijst: $("#p-ranglijst", form).checked,
+      };
+      if (!p.weergavenaam) { fout.textContent = "Vul je naam in."; return; }
+      if (p.weergavenaam.length > 40) { fout.textContent = "Je naam mag hooguit 40 tekens hebben."; return; }
+      if (!GEBRUIKERSNAAM.test(p.gebruikersnaam) || p.gebruikersnaam.includes("--")) {
+        fout.textContent = "Een gebruikersnaam heeft 3 tot 24 tekens: kleine letters, cijfers en streepjes (niet aan het begin of eind).";
+        return;
+      }
+      if (ik && ik.gebruikersnaam === SITE.eigenaar && p.gebruikersnaam !== ik.gebruikersnaam &&
+        !confirm(`Jij bent de eigenaar van de site (eigenaar: "${SITE.eigenaar}" in config.js). Verander je je gebruikersnaam, pas dan ook config.js aan. Anders toont de startpagina je credits niet meer. Doorgaan?`)) return;
+      naam.value = p.weergavenaam;
+      await metKnop($("#p-opslaan", form), fout, "Opslaan…", () => opslaan(p));
+    });
+  }
+
+  function tekenNieuwProfiel(vak) {
+    vak.innerHTML = `<h2>Welkom!</h2>
+      <p>${welkeLink === "invite" ? "Je uitnodiging is gelukt. " : ""}Kies nog hoe je heet. Daarna kun je je credits afvinken.</p>
+      <form class="formulier" id="profiel-form" novalidate>${profielVeldenHtml({}, true)}</form>
+      <p class="klein"><a href="#" id="uitloggen">Uitloggen</a></p>`;
+    koppelProfielFormulier($("#profiel-form"), true, async (p) => {
+      ik = await sbVraag(sb.from("profielen").insert({ id: sessie.user.id, ...p }).select(PROFIEL_VELDEN).single(), "Profiel maken");
+      tekenAccount(vak);
+      toast("Je profiel staat klaar.", true);
+    });
+    $("#uitloggen").addEventListener("click", (e) => { e.preventDefault(); logUit("local"); });
+  }
+
+  function tekenAccount(vak) {
+    const menu = $(".kop nav .nav-ik");
+    if (menu) { menu.textContent = ik.weergavenaam; menu.title = "Mijn account"; }
+    vak.innerHTML = `
+      <p class="beheer-aan"><strong>Je bent ingelogd als ${esc(ik.weergavenaam)}.</strong></p>
+      <div class="knoppen">
+        <a class="knop" href="${esc(profielLink(ik))}">Naar mijn credits</a>
+        <button class="knop knop-licht" type="button" id="uitloggen">Uitloggen</button>
+      </div>
+      <h2 class="beheer-kop">Profiel</h2>
+      <form class="formulier" id="profiel-form" novalidate>${profielVeldenHtml(ik, false)}</form>
+      <div id="account-extra"></div>
+      <h2 class="beheer-kop">Uitloggen op al je apparaten</h2>
+      <p class="klein">Telefoon kwijt, of ingelogd op een computer van iemand anders? Hiermee log je overal uit. Je gegevens blijven bewaard.</p>
+      <div class="knoppen"><button class="knop knop-licht" type="button" id="overal-uit">Overal uitloggen</button></div>`;
+    koppelProfielFormulier($("#profiel-form"), false, async (p) => {
+      ik = await sbVraag(sb.from("profielen").update(p).eq("id", ik.id).select(PROFIEL_VELDEN).single(), "Opslaan");
+      tekenAccount(vak);
+      toast("Opgeslagen.");
+    });
+    $("#uitloggen").addEventListener("click", () => logUit("local"));
+    $("#overal-uit").addEventListener("click", () => {
+      if (confirm("Op al je apparaten uitloggen? Daarna log je overal opnieuw in met een link per mail.")) logUit("global");
+    });
+  }
+
+  async function logUit(waar) {
+    try { await sb.auth.signOut({ scope: waar }); } catch (e) { console.warn(e); }
+    // Lukt het afmelden bij Supabase niet (geen internet), dan in elk geval op dit apparaat
+    try { localStorage.removeItem("achtbanen-sessie"); } catch (e) { /* geen opslag */ }
+    location.replace("./");
+  }
+
+  /* ---------- Menu en voet ---------- */
+
+  function tekenMenu() {
+    const nav = $(".kop nav");
+    if (nav && sbAan) {
+      nav.insertAdjacentHTML("beforeend", ik
+        ? `<a href="account.html" class="nav-ik" title="Mijn account">${esc(ik.weergavenaam)}</a>`
+        : `<a href="account.html" class="nav-ik">Inloggen</a>`);
+    }
+    if (nav && beheer && PAGINA !== "beheer") nav.insertAdjacentHTML("beforeend", '<a href="beheer.html" class="nav-beheer">Beheer</a>');
+    const voet = $(".voet");
+    if (voet && sbAan && PAGINA !== "account") {
+      voet.insertAdjacentHTML("beforeend", `<p><a href="account.html">${ik ? "Mijn account" : "Inloggen"}</a></p>`);
+    }
+  }
+
   /* ---------- Starten ---------- */
   document.querySelectorAll("[data-sitenaam]").forEach((el) => { el.textContent = SITE.naam; });
-  if (beheer && PAGINA !== "beheer") {
-    $(".kop nav")?.insertAdjacentHTML("beforeend", '<a href="beheer.html" class="nav-beheer">Beheer</a>');
-  }
-  if (PAGINA === "home") { document.title = SITE.naam; startPagina(); }
-  if (PAGINA === "achtbaan") startAchtbaan();
-  if (PAGINA === "beheer") startBeheer();
+  if (["home", "achtbaan"].includes(PAGINA)) laadAlles().catch(() => { /* de pagina toont de fout */ });
+  (async () => {
+    if (!(await startAccount())) return;
+    tekenMenu();
+    if (PAGINA === "home") { document.title = SITE.naam; startPagina(); }
+    if (PAGINA === "achtbaan") startAchtbaan();
+    if (PAGINA === "beheer") startBeheer();
+    if (PAGINA === "account") startAccountPagina();
+  })();
 })();

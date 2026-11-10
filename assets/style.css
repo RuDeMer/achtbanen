@@ -486,3 +486,11 @@ h2 { font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 800; }
 #splits-namen label { margin-bottom: .5rem; }
 #splits-meer { margin-bottom: .9rem; }
 a.knop-klein { text-decoration: none; display: inline-block; }
+
+/* ---------- accounts ---------- */
+
+.kop nav .nav-ik { color: var(--inkt); font-weight: 700; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
+.link-voorbeeld code { word-break: break-all; color: var(--inkt); }
+.mijn-rit > h2:first-child { font-size: 1.9rem; margin-bottom: .6rem; }
+.formulier .klein { margin: -.4rem 0 .8rem; }
+.formulier label + .klein { margin-top: -.5rem; }

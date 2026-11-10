@@ -6,7 +6,7 @@ Alle achtbanen van de wereld op één site, met een teller van de achtbanen die 
 
 | Bestand | Wat het doet |
 | --- | --- |
-| `config.js` | Naam van de site en je GitHub-gegevens. Het enige bestand dat je hoeft aan te passen. |
+| `config.js` | Naam van de site, je GitHub-gegevens en de publieke gegevens van Supabase. Het enige bestand dat je hoeft aan te passen. |
 | `data/gereden.json` | Jouw credits. De site schrijft hier zelf in als je beheer aanzet; met de hand kan ook. |
 | `data/extra.json` | Achtbanen die niet in Wikidata of OpenStreetMap staan. |
 | `data/splitsen.json` | Banen met meer sporen (zoals Joris en de Draak), die per spoor als eigen achtbaan tellen. |
@@ -17,8 +17,81 @@ Alle achtbanen van de wereld op één site, met een teller van de achtbanen die 
 | `index.html` | De startpagina met teller, kaart en zoeklijst. |
 | `achtbaan.html` | De attractiepagina. Toont elke achtbaan via `achtbaan.html?id=…`. |
 | `beheer.html` | Het beheerpaneel. Staat niet in het menu; alleen voor jou. |
+| `account.html` | Inloggen met een link per mail, je profiel en uitloggen. |
+| `supabase/schema.sql` | De database voor accounts en credits, met de beveiliging. Plak je in Supabase. |
+| `supabase/test_beveiliging.sql` | Test of niemand bij de gegevens van een ander kan. Draai je in Supabase. |
+| `supabase/mails/` | Nederlandse teksten voor de inlogmail en de uitnodiging. |
+| `assets/vendor/supabase.js` | De officiële Supabase-bibliotheek (versie 2.118.0, MIT-licentie). Staat in de repository, zodat de site geen andere server nodig heeft. |
 | `scripts/haal_achtbanen.py` | Haalt de achtbanen op bij Wikidata en OpenStreetMap, en zoekt foto's. |
 | `.github/workflows/site.yml` | Laat GitHub de lijst ophalen en de site publiceren. |
+
+## Accounts voor vrienden (Supabase)
+
+Met een account vinkt iedere vriend zelf aan welke achtbanen hij of zij gereden heeft. De accounts en credits staan bij [Supabase](https://supabase.com) (gratis). Zolang `supabaseUrl` in `config.js` leeg is, werkt de site zoals vroeger met `data/gereden.json`.
+
+Zo werkt de beveiliging: in `config.js` staat alleen de **publieke sleutel**. Die mag iedereen zien. De database zelf (*row level security*) zorgt dat iedereen profielen en credits kan lezen, maar dat je alleen je eigen gegevens kunt toevoegen, wijzigen of verwijderen. De **geheime sleutel** (`sb_secret_…`, vroeger `service_role`) heb je voor deze site niet nodig. Zet hem nooit in `config.js`, niet in de repository en niet in een bericht aan iemand.
+
+### Stap 1: project aanmaken
+
+1. Ga naar [supabase.com](https://supabase.com) en kies **Start your project**. Inloggen met je GitHub-account is het makkelijkst.
+2. Kies **New project**. Gebruik de organisatie die Supabase voor je maakt, met het gratis abonnement (**Free**).
+3. **Project name**: bijvoorbeeld `achtbanen`.
+4. **Database password**: kies **Generate a password** en bewaar het in je wachtwoordmanager. De site gebruikt het niet, maar je hebt het nodig als je ooit zelf een volledige kopie van de database wilt maken.
+5. **Region**: kies een regio in Europa, bijvoorbeeld **Central EU (Frankfurt)**. Zie je alleen een keuze per werelddeel, kies dan **Europe**. De gegevens van je vrienden blijven zo in de EU.
+6. Laat de rest staan zoals het is (de **Data API** moet aan staan) en kies **Create new project**. Na een minuut of twee is het project klaar.
+
+### Stap 2: database maken
+
+1. Kies links **SQL Editor** en dan **New query**.
+2. Open [`supabase/schema.sql`](supabase/schema.sql), kopieer alles, plak het in het venster en kies **Run**. Je ziet *Success. No rows returned*.
+3. Kies weer **New query**, plak [`supabase/test_beveiliging.sql`](supabase/test_beveiliging.sql) en kies **Run**. Onderaan moet staan: **40 van 40 goed**. De test maakt nepgebruikers aan, probeert van alles wat niet mag (de credits van een ander wijzigen, e-mailadressen lezen, rare invoer) en draait daarna alles terug. Er blijft niets achter.
+
+### Stap 3: inloggen per mail instellen
+
+1. **Open registratie uit**: kies links **Authentication**, dan **Sign In / Providers**. Zet **Allow new users to sign up** uit en kies **Save**. Nu kan alleen iemand die jij uitnodigt een account krijgen. Laat bij **Auth Providers** de provider **Email** aan staan.
+2. **Adressen**: kies **Authentication**, **URL Configuration**.
+   - **Site URL**: `https://rudemer.github.io/achtbanen/`
+   - Kies bij **Redirect URLs** **Add URL** en vul in: `https://rudemer.github.io/achtbanen/account.html`. Na het klikken op de inloglink stuurt Supabase je alleen naar adressen uit deze lijst.
+3. **Mail versturen (verplicht)**: de ingebouwde mailserver van Supabase stuurt alleen mail naar mensen in jouw Supabase-team, en hooguit een paar per uur. Je vrienden krijgen dus pas mail als je een eigen mailserver (SMTP) instelt. Met Gmail gaat dat zo:
+   1. Zet in je Google-account **2-stapsverificatie** aan (Google-account, **Beveiliging**).
+   2. Maak een **app-wachtwoord**: zoek in je Google-account op *App-wachtwoorden*, geef het de naam *Supabase* en kopieer de 16 letters.
+   3. Kies in Supabase **Authentication**, **Emails**, **SMTP Settings** en zet **Enable custom SMTP** aan. Vul in: **Sender email** je Gmail-adres, **Sender name** *Rubens Achtbanen*, **Host** `smtp.gmail.com`, **Port** `465`, **Username** je Gmail-adres, **Password** het app-wachtwoord. Kies **Save**.
+
+   Liever geen Gmail? Elke SMTP-dienst werkt, bijvoorbeeld [Brevo](https://www.brevo.com) (gratis tot 300 mails per dag). Vul dan hun SMTP-gegevens in.
+4. **Nederlandse mails**: kies **Authentication**, **Emails**, **Templates**.
+   - Bij **Magic link**: onderwerp *Je inloglink voor Rubens Achtbanen* en als tekst de inhoud van [`supabase/mails/inloglink.html`](supabase/mails/inloglink.html). Daar staat ook een code van 6 cijfers in. Die is handig als een mailprogramma (zoals Outlook van school of werk) de link al opent voordat jij erop tikt; dan is de link al gebruikt, maar werkt de code nog.
+   - Bij **Invite user**: onderwerp *Je bent uitgenodigd voor Rubens Achtbanen* en de inhoud van [`supabase/mails/uitnodiging.html`](supabase/mails/uitnodiging.html).
+
+Een inloglink en een uitnodiging werken één keer en een uur lang (*Email OTP Expiration* bij **Sign In / Providers**, **Email**). Iemand kan hooguit één keer per minuut een nieuwe link vragen.
+
+### Stap 4: de site koppelen
+
+1. Kies in Supabase **Project Settings** (het tandwiel), **API Keys**. Kopieer de **Publishable key** (begint met `sb_publishable_`). Staat daar nog niets, kies dan **Create new API Keys**.
+2. De **Project URL** staat bij **Project Settings**, **Data API** (of onder de knop **Connect** bovenaan). Hij ziet eruit als `https://abcdefghijkl.supabase.co`.
+3. Open `config.js` op GitHub (potloodje) en vul ze in:
+
+   ```js
+   supabaseUrl: "https://abcdefghijkl.supabase.co",
+   supabaseSleutel: "sb_publishable_…",
+   eigenaar: "ruben",
+   ```
+
+   Kies **Commit changes**. Na een paar minuten staat er rechtsboven op de site **Inloggen**.
+
+### Stap 5: je eigen account (eerst jij, dan je vrienden)
+
+1. Kies in Supabase **Authentication**, **Users**, **Add user**, **Send invitation**. Vul je eigen e-mailadres in en kies **Invite user**.
+2. Open de mail en tik op **Uitnodiging aannemen**. Kies je naam en als gebruikersnaam precies wat bij `eigenaar` in `config.js` staat (`ruben`). Zo weet de site dat de startpagina van jou is.
+
+Doe dit vóór je vrienden uitnodigt, zodat niemand anders jouw gebruikersnaam kan nemen.
+
+### Een vriend uitnodigen
+
+1. **Authentication**, **Users**, **Add user**, **Send invitation**, het e-mailadres van je vriend, **Invite user**.
+2. Je vriend krijgt een mail, tikt op de link, kiest een naam en een gebruikersnaam, en kan meteen credits afvinken.
+3. Daarna logt je vriend in via **Inloggen** op de site: e-mailadres invullen, link in de mail aantikken. Een wachtwoord is er niet.
+
+Is de uitnodiging verlopen (na een uur)? Nodig gewoon opnieuw uit op dezelfde manier. Wil iemand niet meer meedoen? Ook **Delete user**: dan verdwijnen account, profiel en credits samen.
 
 ## Beheer: ritten opslaan zonder kopiëren en plakken
 
