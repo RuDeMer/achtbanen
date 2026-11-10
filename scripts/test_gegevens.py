@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import haal_achtbanen as h  # noqa: E402
 import normaliseer as n  # noqa: E402
 import wikipedia as w  # noqa: E402
 
@@ -181,6 +182,32 @@ class Normaliseren(unittest.TestCase):
         self.assertIsNone(n.getal("inversies", 30))
         self.assertIsNone(n.jaar("geopend", 1700))
         self.assertEqual(n.samen_onmogelijk({"hoogte": 20, "valhoogte": 80, "lengte": 25}), ["valhoogte", "lengte"])
+
+
+class Fotos(unittest.TestCase):
+    def info(self, breed=4000, hoog=2500, mime="image/jpeg", vrij=True):
+        return {"breed": breed, "hoog": hoog, "mime": mime, "vrij": vrij, "licentie": "CC BY-SA 4.0", "maker": "Iemand"}
+
+    def test_oordeel(self):
+        self.assertEqual(h.foto_oordeel("Baron 1898 (2015).jpg", self.info()), 2)
+        self.assertEqual(h.foto_oordeel("Baron 1898 staand.jpg", self.info(2000, 3000)), 1)  # staand: tweede keus
+        self.assertEqual(h.foto_oordeel("Baron 1898 construction 2014.jpg", self.info()), 1)
+        self.assertEqual(h.foto_oordeel("Baron 1898 train.jpg", self.info()), 1)
+        self.assertEqual(h.foto_oordeel("Efteling logo.jpg", self.info()), 0)
+        self.assertEqual(h.foto_oordeel("Baron 1898 entrance sign.jpg", self.info()), 0)
+        self.assertEqual(h.foto_oordeel("Food stand near Baron 1898.jpg", self.info()), 0)
+        self.assertEqual(h.foto_oordeel("Baron 1898.png", self.info(mime="image/png")), 0)
+        self.assertEqual(h.foto_oordeel("Baron 1898.jpg", self.info(vrij=False)), 0)
+        self.assertEqual(h.foto_oordeel("Baron 1898.jpg", None), 0)
+
+    def test_foto_info(self):
+        pagina = {"title": "File:X.jpg", "imageinfo": [{"width": 1600, "height": 1200, "mime": "image/jpeg", "extmetadata": {
+            "LicenseShortName": {"value": "CC BY 2.0"}, "Artist": {"value": '<a href="//x">Jan &amp; Piet</a>'}}}],
+            "coordinates": [{"lat": 51.65, "lon": 5.05}]}
+        i = h.foto_info(pagina)
+        self.assertEqual((i["maker"], i["licentie"], i["vrij"], i["lat"]), ("Jan & Piet", "CC BY 2.0", True, 51.65))
+        niet = {"imageinfo": [{"extmetadata": {"LicenseShortName": {"value": "Fair use"}, "NonFree": {"value": "true"}}}]}
+        self.assertFalse(h.foto_info(niet)["vrij"])
 
 
 if __name__ == "__main__":

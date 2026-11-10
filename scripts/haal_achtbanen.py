@@ -22,6 +22,7 @@ Gegevens of foto's van rcdb.com worden niet gebruikt. Alleen het RCDB-nummer
 """
 
 import datetime
+import html
 import http.client
 import json
 import math
@@ -1507,18 +1508,13 @@ def voeg_dubbele_banen_samen(alle, niet, tel):
 #   3. de vrij gelicenseerde hoofdafbeelding van het Wikipedia-artikel
 #   4. de image- of wikimedia_commons-tag uit OpenStreetMap
 #   5. een foto op Commons met de naam van de baan én van het park in de bestandsnaam
-# Daarna wordt elk gekozen bestand bij Commons gecontroleerd: het moet er echt
-# staan en een vrije licentie hebben. Alleen de bestandsnaam wordt bewaard.
+# Elk bestand wordt bij Commons gecontroleerd: het moet er echt staan en een vrije
+# licentie hebben. Een liggende foto van de baan gaat voor (zie foto_oordeel).
+# Bewaard worden de bestandsnaam, de maker en de licentie.
 # Je eigen foto (in data/fotos.json) gaat op de site altijd voor.
 
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 WIKIPEDIA_TALEN = ["nl", "en", "de", "fr", "es", "it", "pl", "sv", "pt", "ja", "zh"]
-GEEN_FOTO = {
-    "logo", "map", "kaart", "karte", "plan", "diagram", "schema", "layout", "sign", "signage",
-    "poster", "flyer", "ticket", "lego", "model", "modell", "minecraft", "render", "rendering",
-    "icon", "stamp", "coin", "flag", "screenshot",
-}
-NIET_VRIJ = re.compile(r"non[- ]?free|fair[ _-]?use|all rights reserved", re.I)
 
 
 def mediawiki(url, params, pogingen=4):
@@ -1592,33 +1588,6 @@ def osm_fotos(groep):
     return uit
 
 
-def geschikte_foto(naam, info):
-    """Een gewone foto: JPEG, groot genoeg, liggend, en geen logo of plattegrond."""
-    breed, hoog = info.get("width") or 0, info.get("height") or 0
-    if info.get("mime") != "image/jpeg" or breed < 800 or hoog < 450:
-        return False
-    if not 1.1 <= breed / hoog <= 2.4:
-        return False
-    woorden = set(re.split(r"[\W_]+", naam.casefold()))
-    return not woorden & GEEN_FOTO
-
-
-def foto_uit_categorie(categorie):
-    data = mediawiki(COMMONS_API, {
-        "action": "query", "generator": "categorymembers", "gcmtitle": f"Category:{categorie}",
-        "gcmtype": "file", "gcmlimit": "100", "prop": "imageinfo", "iiprop": "size|mime",
-    })
-    beste = None
-    for pagina in data.get("query", {}).get("pages", []):
-        naam = pagina.get("title", "").split(":", 1)[-1]
-        info = (pagina.get("imageinfo") or [{}])[0]
-        if naam and geschikte_foto(naam, info):
-            score = (min(info["width"] * info["height"], 12_000_000), naam)
-            if beste is None or score > beste[0]:
-                beste = (score, naam)
-    return beste[1] if beste else None
-
-
 def haal_wd_fotobronnen(qids):
     """Commons-categorie (P373) en Wikipedia-artikelen van achtbanen zonder P18."""
     categorieen, artikelen = {}, defaultdict(dict)
@@ -1676,12 +1645,128 @@ def wikipedia_fotos(artikelen):
     return {q: [per[t] for t in WIKIPEDIA_TALEN if t in per] for q, per in gevonden.items()}
 
 
+# Een foto moet een vrije licentie hebben en echt op Commons staan. Daarna:
+#   beste keus (2):  een liggende foto van de baan, groot genoeg
+#   tweede keus (1): staand, klein, of van de bouw, het station of de trein
+#   afgekeurd (0):   logo, plattegrond, bord, ingang, model, schermafbeelding, ...
+GEEN_FOTO = {
+    "logo", "logos", "logotype", "map", "maps", "kaart", "karte", "plan", "plattegrond", "lageplan", "diagram",
+    "schema", "layout", "sign", "signs", "signage", "bord", "schild", "poster", "flyer", "ticket", "lego", "model",
+    "modell", "miniature", "miniatuur", "minecraft", "render", "rendering", "icon", "stamp", "coin", "flag",
+    "screenshot", "entrance", "entree", "ingang", "eingang", "gate", "souvenir", "badge", "emblem", "wappen", "seal",
+    "brochure", "advert", "advertisement", "drawing", "tekening", "zeichnung", "blueprint", "track_layout", "trackmap",
+    "food", "restaurant", "snack", "snackbar", "shop", "store", "winkel", "kiosk", "toilet", "toilets", "toiletten",
+    "menu", "bench", "plaque", "gedenkplaat", "museum", "exhibit", "tentoonstelling", "statue", "beeld", "selfie",
+}
+TWEEDE_KEUS = {
+    "construction", "bau", "baustelle", "aanbouw", "bouw", "station", "queue", "wachtrij", "warteschlange",
+    "train", "trein", "zug", "wagon", "wagen", "car", "cars", "night", "nacht", "pov", "onride", "on-ride",
+}
+GOEDE_MIME = {"image/jpeg", "image/webp", "image/tiff"}
+NIET_VRIJ = re.compile(r"non[- ]?free|fair[ _-]?use|all rights reserved", re.I)
+FOTO_IIPROP = {"iiprop": "size|mime|extmetadata", "iiextmetadatafilter": "LicenseShortName|License|UsageTerms|NonFree|Artist"}
+
+
+def platte_tekst(html_tekst):
+    t = re.sub(r"<[^>]+>", "", str(html_tekst or ""))
+    t = re.sub(r"\s+", " ", html.unescape(t)).strip()
+    return t
+
+
+def foto_info(pagina):
+    """Wat we van een Commons-bestand willen weten (uit imageinfo en coordinates)."""
+    if pagina.get("missing") or pagina.get("invalid"):
+        return None
+    ii = (pagina.get("imageinfo") or [{}])[0]
+    meta = ii.get("extmetadata") or {}
+    licentie = " ".join(str((meta.get(k) or {}).get("value") or "") for k in ("LicenseShortName", "License", "UsageTerms"))
+    niet_vrij = str((meta.get("NonFree") or {}).get("value") or "").strip().lower() in ("true", "1", "yes")
+    plek = (pagina.get("coordinates") or [{}])[0]
+    return {
+        "breed": ii.get("width") or 0, "hoog": ii.get("height") or 0, "mime": ii.get("mime") or "",
+        "vrij": bool(licentie.strip()) and not niet_vrij and not NIET_VRIJ.search(licentie),
+        "licentie": platte_tekst((meta.get("LicenseShortName") or {}).get("value"))[:40],
+        "maker": platte_tekst((meta.get("Artist") or {}).get("value"))[:80],
+        "lat": plek.get("lat"), "lon": plek.get("lon"),
+    }
+
+
+def foto_oordeel(bestand, info):
+    """2 = beste keus, 1 = tweede keus, 0 = niet gebruiken."""
+    if not info or not info["vrij"] or info["mime"] not in GOEDE_MIME:
+        return 0
+    woorden_ = set(re.split(r"[\W_]+", bestand.casefold()))
+    if woorden_ & GEEN_FOTO:
+        return 0
+    b, h = info["breed"], info["hoog"]
+    if b < 320 or h < 240:
+        return 0
+    if 1.2 <= b / h <= 2.4 and b >= 800 and h >= 450 and not woorden_ & TWEEDE_KEUS:
+        return 2
+    return 1
+
+
+def haal_foto_info(bestanden, cache):
+    """imageinfo (licentie, maker, grootte) en de plek van de camera, per 50 bestanden."""
+    nieuw = sorted(b for b in bestanden if b not in cache)
+    for stuk in in_stukjes(nieuw, 50):
+        data = mediawiki(COMMONS_API, {
+            "action": "query", "prop": "imageinfo|coordinates", **FOTO_IIPROP,
+            "titles": "|".join(f"File:{b}" for b in stuk),
+        })
+        query = data.get("query", {})
+        terug = {f"File:{b}": b for b in stuk}
+        for n in query.get("normalized", []):
+            terug[n["to"]] = terug.get(n["from"])
+        for b in stuk:
+            cache.setdefault(b, None)
+        for pagina in query.get("pages", []):
+            b = terug.get(pagina.get("title"))
+            if b:
+                cache[b] = foto_info(pagina)
+        time.sleep(0.5)
+
+
+def beste_uit_pagina_lijst(paginas, cache, past=lambda titel, info: True, naam=None):
+    """De beste foto uit een lijst Commons-pagina's (categorie of zoekresultaat): eerst het
+    oordeel, dan een foto met de naam van de baan in de bestandsnaam, dan de grootte."""
+    sleutel_naam = volle_sleutel(naam) if naam else ""
+    beste = None
+    for pagina in paginas:
+        titel = pagina.get("title", "").split(":", 1)[-1]
+        info = foto_info(pagina)
+        if not titel or not info:
+            continue
+        cache[titel] = info
+        oordeel = foto_oordeel(titel, info)
+        if oordeel and past(titel, info):
+            met_naam = bool(sleutel_naam) and sleutel_naam in volle_sleutel(titel)
+            score = (oordeel, met_naam, min(info["breed"] * info["hoog"], 12_000_000), titel)
+            if beste is None or score > beste[0]:
+                beste = (score, titel)
+    return beste[1] if beste else None
+
+
+def foto_uit_categorie(categorie, cache, naam=None):
+    data = mediawiki(COMMONS_API, {
+        "action": "query", "generator": "categorymembers", "gcmtitle": f"Category:{categorie}",
+        "gcmtype": "file", "gcmlimit": "100", "prop": "imageinfo|coordinates", **FOTO_IIPROP,
+    })
+    return beste_uit_pagina_lijst(data.get("query", {}).get("pages", []), cache, naam=naam)
+
+
 PARK_ALGEMEEN = {
     "park", "parc", "parque", "parco", "freizeitpark", "attractiepark", "pretpark", "themepark", "theme",
     "amusement", "resort", "world", "land", "the", "fun", "family", "adventure", "adventures", "kingdom",
     "erlebnispark", "lunapark", "luna", "parks", "flags", "studios", "town", "city", "village", "garden", "gardens",
 }
-ZOEK_TOTAAL = int(os.environ.get("ACHTBANEN_ZOEKTIJD", 12 * 60))  # seconden: zoeken op Commons stopt daarna, de rest volgende keer
+# Namen die bij veel banen voorkomen: daarop zoeken geeft geen zekerheid
+ALGEMENE_FOTONAAM = {
+    "boomerang", "wackyworm", "bigapple", "kiddiecoaster", "familycoaster", "juniorcoaster", "minicoaster",
+    "dragon", "drachen", "rollercoaster", "achtbaan", "achterbahn", "wildmouse", "wildemaus", "crazymouse",
+    "tivoli", "zyklon", "jetstar", "galaxi", "looping", "loopingstar", "wildcat", "rollercoasterride", "coaster",
+}
+ZOEK_TOTAAL = 12 * 60  # seconden: zoeken op Commons stopt daarna, de rest volgende keer
 
 
 def woorden(tekst):
@@ -1689,111 +1774,106 @@ def woorden(tekst):
     return re.findall(r"\w+", "".join(c for c in s if not unicodedata.combining(c)))
 
 
-def foto_via_zoeken(a):
-    """Zoekt op Commons naar een foto met de naam van de baan én van het park in de
-    bestandsnaam, zoals "Europa-Park Arthur 2018.jpg". Alleen bestanden op Commons,
-    dus met een vrije licentie (dat wordt daarna nog gecontroleerd)."""
+def foto_via_zoeken(a, cache):
+    """Zoekt op Commons naar een foto van deze baan, alleen als het zeker om deze baan gaat:
+    de naam van de baan moet in de bestandsnaam staan, én de naam van het park of een
+    cameraplek binnen een kilometer. Een cameraplek verder dan twee kilometer weg telt
+    niet, ook als de naam klopt."""
     naam = volle_sleutel(a["naam"])
     park = [w for w in woorden(a.get("park")) if len(w) >= 4 and w not in PARK_ALGEMEEN]
-    if len(naam) < 3 or not park:
+    if len(naam) < 4 or naam in ALGEMENE_FOTONAAM or (not park and a.get("lat") is None):
         return None
-    zoek = f'intitle:"{a["naam"].replace(chr(34), "")}" {park[0]}'
+    zoek = f'intitle:"{a["naam"].replace(chr(34), "")}"' + (f" {park[0]}" if park else "")
     data = mediawiki(COMMONS_API, {
         "action": "query", "generator": "search", "gsrnamespace": "6", "gsrsearch": zoek,
-        "gsrlimit": "30", "prop": "imageinfo", "iiprop": "size|mime",
+        "gsrlimit": "30", "prop": "imageinfo|coordinates", **FOTO_IIPROP,
     })
-    beste = None
-    for pagina in data.get("query", {}).get("pages", []):
-        titel = pagina.get("title", "").split(":", 1)[-1]
+
+    def past(titel, info):
         sleutel = volle_sleutel(titel)
-        info = (pagina.get("imageinfo") or [{}])[0]
-        if naam in sleutel and any(w in sleutel for w in park) and geschikte_foto(titel, info):
-            score = (min(info["width"] * info["height"], 12_000_000), titel)
-            if beste is None or score > beste[0]:
-                beste = (score, titel)
-    return beste[1] if beste else None
+        if naam not in sleutel:
+            return False
+        if info.get("lat") is not None and a.get("lat") is not None:
+            d = afstand(info["lat"], info["lon"], a["lat"], a["lon"])
+            if d > 2000:
+                return False
+            if d <= 1000:
+                return True
+        return any(w in sleutel for w in park)
 
-
-def controleer_licenties(bestanden):
-    """Welke bestanden staan echt op Commons, met een vrije licentie?"""
-    goed = set()
-    for stuk in in_stukjes(sorted(bestanden), 50):
-        data = mediawiki(COMMONS_API, {
-            "action": "query", "prop": "imageinfo", "iiprop": "extmetadata|mime",
-            "iiextmetadatafilter": "LicenseShortName|License|UsageTerms|NonFree",
-            "titles": "|".join(f"File:{b}" for b in stuk),
-        })
-        query = data.get("query", {})
-        terug = {f"File:{b}": b for b in stuk}
-        for n in query.get("normalized", []):
-            terug[n["to"]] = terug.get(n["from"])
-        for pagina in query.get("pages", []):
-            if pagina.get("missing") or pagina.get("invalid"):
-                continue
-            info = (pagina.get("imageinfo") or [{}])[0]
-            meta = info.get("extmetadata") or {}
-            licentie = " ".join(str((meta.get(k) or {}).get("value") or "") for k in ("LicenseShortName", "License", "UsageTerms"))
-            niet_vrij = str((meta.get("NonFree") or {}).get("value") or "").strip().lower() in ("true", "1", "yes")
-            if niet_vrij or not licentie.strip() or NIET_VRIJ.search(licentie):
-                continue
-            if not str(info.get("mime") or "").startswith("image/"):
-                continue
-            if terug.get(pagina.get("title")):
-                goed.add(terug[pagina["title"]])
-        time.sleep(0.5)
-    return goed
+    return beste_uit_pagina_lijst(data.get("query", {}).get("pages", []), cache, past, a["naam"])
 
 
 def zoek_fotos(alle, wd_ids, vorige_per_id, tel, categorieen=None, artikelen=None):
+    """Per baan de beste vrije foto. Volgorde: Wikidata P18, de Commons-categorie,
+    de hoofdafbeelding van het Wikipedia-artikel, de foto in OpenStreetMap, en als
+    laatste zoeken op Commons. Een liggende foto van de baan gaat voor; een staande foto
+    of een foto van de bouw alleen als er niets beters is. Je eigen foto (data/fotos.json)
+    gaat op de site altijd voor."""
     print("Foto's zoeken…")
-    bronnen = {a["id"]: [] for a in alle}
+    cache = {}
+    kandidaten = {a["id"]: [] for a in alle}  # (bron, bestand), in volgorde
+    fout = categorieen is None or artikelen is None
     for a in alle:
         if a.get("foto"):
-            bronnen[a["id"]].append(("p18" if a["id"] in wd_ids else "vorige", a["foto"]))
-    fout = categorieen is None or artikelen is None
+            kandidaten[a["id"]].append(("p18" if a["id"] in wd_ids else "vorige", a["foto"]))
+    osm_bestanden = {a["id"]: [w for soort, w in a.get("_osm_fotos", []) if soort == "bestand"] for a in alle}
 
-    zonder = {a["id"] for a in alle if a["id"] in wd_ids and not a.get("foto")}
-    categorieen = {q: c for q, c in (categorieen or {}).items() if q in zonder}
-    artikelen = {q: t for q, t in (artikelen or {}).items() if q in zonder}
-    print(f"  {len(zonder)} Wikidata-banen zonder P18: {len(categorieen)} met een Commons-categorie, {len(artikelen)} met een Wikipedia-artikel")
+    def oordeel(aid):
+        return max((foto_oordeel(b, cache.get(b)) for _, b in kandidaten[aid] + [("osm", f) for f in osm_bestanden[aid]]), default=0)
+
+    try:
+        haal_foto_info({b for lijst in kandidaten.values() for _, b in lijst} | {b for lijst in osm_bestanden.values() for b in lijst}, cache)
+    except Exception as e:  # noqa: BLE001
+        print(f"  Foto's niet te controleren: {e}")
+        fout = True
+
+    # Nog geen liggende foto: de Commons-categorie (uit Wikidata of OSM)
+    namen = {a["id"]: a["naam"] for a in alle}
 
     def uit_categorie(aid, categorie, bron):
         nonlocal fout
         try:
-            f = foto_uit_categorie(categorie)
+            f = foto_uit_categorie(categorie, cache, namen.get(aid))
         except Exception as e:  # noqa: BLE001
             print(f"  categorie {categorie}: {e}")
             fout = True
             return
         if f:
-            bronnen[aid].append((bron, f))
+            kandidaten[aid].append((bron, f))
         time.sleep(0.3)
 
-    for i, (aid, categorie) in enumerate(sorted(categorieen.items()), 1):
-        if i % 50 == 0:
-            print(f"  categorieën {i}/{len(categorieen)}")
+    zoek_cat = [(a["id"], (categorieen or {}).get(a["id"])) for a in alle if oordeel(a["id"]) < 2]
+    zoek_cat = [(aid, c) for aid, c in zoek_cat if c]
+    print(f"  {len(zoek_cat)} banen zonder liggende foto met een Commons-categorie")
+    for i, (aid, categorie) in enumerate(zoek_cat, 1):
+        if i % 100 == 0:
+            print(f"  categorieën {i}/{len(zoek_cat)}")
         uit_categorie(aid, categorie, "categorie")
 
+    # De hoofdafbeelding van het Wikipedia-artikel
+    nodig = {a["id"]: (artikelen or {}).get(a["id"]) for a in alle if oordeel(a["id"]) < 2 and (artikelen or {}).get(a["id"])}
     try:
-        for q, lijst in wikipedia_fotos(artikelen).items():
-            bronnen[q].extend(("wikipedia", f) for f in lijst)
+        gevonden = wikipedia_fotos(nodig)
+        haal_foto_info({f for lijst in gevonden.values() for f in lijst}, cache)
+        for q, lijst in gevonden.items():
+            kandidaten[q].extend(("wikipedia", f) for f in lijst)
     except Exception as e:  # noqa: BLE001
         print(f"  Wikipedia-afbeeldingen niet opgehaald: {e}")
         fout = True
 
+    # De foto in OpenStreetMap, en anders de categorie die OSM noemt
     for a in alle:
-        for soort, w in a.get("_osm_fotos", []):
-            if soort == "bestand":
-                bronnen[a["id"]].append(("osm", w))
+        kandidaten[a["id"]].extend(("osm", f) for f in osm_bestanden[a["id"]])
     for a in alle:
-        if not bronnen[a["id"]]:
+        if oordeel(a["id"]) < 1:
             for soort, w in a.get("_osm_fotos", []):
                 if soort == "categorie":
                     uit_categorie(a["id"], w, "osm")
                     break
 
-    # 5. Nog niets gevonden: Commons doorzoeken op de naam van de baan plus het park
-    zoeken = [a for a in alle if not bronnen[a["id"]] and a.get("park")]
+    # Nog niets: Commons doorzoeken, alleen als het zeker om deze baan gaat
+    zoeken = [a for a in alle if oordeel(a["id"]) < 1]
     print(f"  Commons doorzoeken voor {len(zoeken)} banen zonder foto…")
     begin = time.monotonic()
     for i, a in enumerate(zoeken, 1):
@@ -1801,46 +1881,41 @@ def zoek_fotos(alle, wd_ids, vorige_per_id, tel, categorieen=None, artikelen=Non
             print(f"  zoeken gestopt na {i - 1} banen (tijd op); de rest volgt de volgende keer")
             break
         try:
-            f = foto_via_zoeken(a)
+            f = foto_via_zoeken(a, cache)
         except Exception as e:  # noqa: BLE001
             print(f"  zoeken naar {a['naam']}: {e}")
             fout = True
             continue
         if f:
-            bronnen[a["id"]].append(("zoeken", f))
+            kandidaten[a["id"]].append(("zoeken", f))
         if i % 100 == 0:
             print(f"  gezocht {i}/{len(zoeken)}")
         time.sleep(0.2)
 
-    alle_bestanden = {f for lijst in bronnen.values() for _, f in lijst}
-    try:
-        goed = controleer_licenties(alle_bestanden)
-        gecontroleerd = True
-    except Exception as e:  # noqa: BLE001
-        print(f"  Licenties niet te controleren: {e}. Alleen P18 en eerder gecontroleerde foto's blijven.")
-        goed, gecontroleerd, fout = set(), False, True
-    if gecontroleerd:
-        print(f"  {len(goed)} van de {len(alle_bestanden)} bestanden staan op Commons met een vrije licentie")
-        tel["foto_afgekeurd"] = len(alle_bestanden) - len(goed)
-
+    # Kiezen: de eerste beste keus in de volgorde, anders de eerste tweede keus
     for a in alle:
         keuze = None
-        for bron, f in bronnen[a["id"]]:
-            # Gecontroleerd: alleen vrije bestanden die echt op Commons staan.
-            # Niet te controleren: alleen P18 en foto's die eerder al goedgekeurd waren.
-            toegestaan = f in goed if gecontroleerd else bron in ("p18", "vorige")
-            if toegestaan:
-                keuze = (bron, f)
+        for niveau in (2, 1):
+            keuze = next(((bron, f) for bron, f in kandidaten[a["id"]] if foto_oordeel(f, cache.get(f)) == niveau), None)
+            if keuze:
                 break
+        oud = vorige_per_id.get(a["id"]) or {}
         if keuze:
-            a["foto"] = keuze[1]
-            tel[f"foto_{keuze[0]}"] += 1
+            bron, f = keuze
+            info = cache[f]
+            a["foto"] = f
+            a["fotoInfo"] = {k: v for k, v in {"maker": info["maker"] or None, "licentie": info["licentie"] or None, "bron": bron}.items() if v}
+            tel[f"foto_{bron}"] += 1
+            tel["foto_liggend" if foto_oordeel(f, info) == 2 else "foto_tweede_keus"] += 1
             continue
         a.pop("foto", None)
-        oud = (vorige_per_id.get(a["id"]) or {}).get("foto")
-        if fout and oud:
-            a["foto"] = oud  # iets lukte niet: de foto van de vorige keer blijft
+        a.pop("fotoInfo", None)
+        if fout and oud.get("foto"):
+            a["foto"] = oud["foto"]  # iets lukte niet: de foto van de vorige keer blijft
+            if oud.get("fotoInfo"):
+                a["fotoInfo"] = oud["fotoInfo"]
             tel["foto_vorige"] += 1
+    tel["foto_afgekeurd"] = sum(1 for b, i in cache.items() if foto_oordeel(b, i) == 0)
 
 
 # ---------------------------------------------------------------------------
@@ -2167,7 +2242,9 @@ def samenvatting(tel, grootte):
         f"  uit een OSM-tag:                    {tel['foto_osm']:>6}",
         f"  gevonden op Commons (naam + park):  {tel['foto_zoeken']:>6}",
         f"  van de vorige keer:                 {tel['foto_vorige']:>6}",
-        f"  afgekeurd (niet op Commons/vrij):   {tel['foto_afgekeurd']:>6}",
+        f"  liggende foto van de baan:          {tel['foto_liggend']:>6}",
+        f"  tweede keus (staand, bouw, trein):  {tel['foto_tweede_keus']:>6}",
+        f"  afgekeurd (niet vrij, logo, kaart): {tel['foto_afgekeurd']:>6}",
         f"Grootte achtbanen.json:               {grootte / 1e6:.2f} MB",
     ]
     tekst = "\n".join(regels)

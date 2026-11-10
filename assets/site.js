@@ -83,6 +83,134 @@
     if (anders) anders(); else img.remove();
   }
 
+  /* ---------- Getekende illustratie (als er geen vrije foto is) ----------
+     In de stijl van de baan op de startpagina: rails, bielzen, steunen en een treintje.
+     De vorm past bij het type en de hoogte, met een looping per inversie (hooguit drie).
+     Het is duidelijk een tekening, geen nepfoto. Elke baan krijgt door zijn code een
+     eigen variatie, die bij elk bezoek hetzelfde is. */
+  function illustratie(a, B = 400, H = 300) {
+    let zaad = [...String(a.id)].reduce((s, c) => (s * 31 + c.charCodeAt(0)) >>> 0, 7);
+    const toeval = () => ((zaad = (zaad * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const t = a.type || "Achtbaan";
+    const grond = H * 0.86, plafond = H * 0.14;
+    const schattingen = { Kinderachtbaan: 6, Familieachtbaan: 12, "Wilde muis": 14, Hypercoaster: 70, Lanceerachtbaan: 40, Boomerang: 35 };
+    const hoogte = a.hoogte || schattingen[t] || 25;
+    const f = Math.max(0.2, Math.min(1, Math.sqrt(hoogte / 90)));
+    const piek = grond - (grond - plafond) * f;
+    const laag = grond - 6;
+    const loopType = /Omgekeerde|4D|Boomerang|Vliegende/.test(t);
+    let lussen = Math.min(3, a.inversies != null ? a.inversies : loopType ? 1 : 0);
+    const p = []; // punten van de baan
+    const lus = (cx, cy, r) => { for (let i = 0; i <= 16; i++) { const h = (i / 16) * Math.PI * 2; p.push([cx + r * Math.sin(h) + (i / 16) * r * 0.7, cy + r * Math.cos(h)]); } };
+    const heuvels = (x0, x1, n, y0) => {
+      for (let i = 1; i <= n; i++) {
+        const x = x0 + ((x1 - x0) * (i - 0.5)) / n;
+        const y = y0 + (laag - y0) * (0.25 + toeval() * 0.4);
+        p.push([x, y], [x0 + ((x1 - x0) * i) / n, laag - 4 - toeval() * 10]);
+      }
+    };
+    // Loopings worden kleiner als ze anders niet passen
+    const ruimte = (x0, x1, n, r0) => (n ? Math.min(r0, ((x1 - x0) / n - 6) / 1.9) : r0);
+    let r = Math.min(H * 0.17, (grond - piek) * 0.45 + 14);
+    let trein = 2; // op welk stuk van de baan het treintje rijdt (standaard de optakeling)
+
+    if (t === "Alpine coaster") {
+      p.push([0, H * 0.3]);
+      for (let i = 1; i <= 7; i++) p.push([(B * i) / 7, H * 0.3 + (grond - 8 - H * 0.3) * (i / 7) + (i % 2 ? -12 : 10)]);
+    } else if (t === "Wilde muis") {
+      // Van opzij: optakeling en dan trapsgewijs omlaag, met een kort stukje vlak na elke bocht
+      p.push([0, laag], [B * 0.08, laag], [B * 0.28, piek], [B * 0.31, piek - 1]);
+      const treden = 4, stap = (laag - piek) / treden;
+      for (let i = 0; i < treden; i++) {
+        const x0 = B * (0.33 + i * 0.16), y = piek + i * stap;
+        p.push([x0 + B * 0.07, y], [x0 + B * 0.1, y + stap * 0.5], [x0 + B * 0.13, y + stap]);
+      }
+      p.push([B, laag]);
+    } else if (t === "Boomerang" || t === "Shuttleachtbaan") {
+      p.push([B * 0.04, plafond + 4], [B * 0.12, laag - 10], [B * 0.25, laag]);
+      r = ruimte(B * 0.3, B * 0.7, 1, r);
+      lus(B * 0.42, laag - r, r);
+      p.push([B * 0.75, laag], [B * 0.92, laag - 20], [B * 0.98, plafond + 10]);
+      trein = 1;
+    } else if (t === "Lanceerachtbaan") {
+      p.push([0, laag], [B * 0.3, laag], [B * 0.4, piek + 6], [B * 0.46, piek], [B * 0.52, piek + 6], [B * 0.6, laag - 6]);
+      r = ruimte(B * 0.62, B * 0.94, lussen, r * 0.8);
+      let x = B * 0.62 + r;
+      for (let i = 0; i < lussen; i++) { lus(x, laag - r - 2, r); x += r * 1.9 + 6; }
+      if (x - r < B * 0.86) heuvels(x - r, B, 1, piek + (laag - piek) * 0.4);
+      else p.push([B, laag]);
+      trein = 1;
+    } else {
+      // Gewone baan: optakeling, eerste afdaling, heuvels en loopings (elke baan net iets anders)
+      const top = B * (0.26 + toeval() * 0.1), voet = B * (0.04 + toeval() * 0.08);
+      const dal = top + B * (0.11 + toeval() * 0.04);
+      p.push([0, laag], [voet, laag], [top, piek], [top + B * 0.04, piek + 2], [dal, laag - 4]);
+      r = ruimte(dal + B * 0.03, B * 0.94, lussen, r);
+      let x = dal + B * 0.03 + r * 0.8;
+      for (let i = 0; i < lussen; i++) { lus(x, laag - r - 2, r); x += r * 1.9 + 6; }
+      const x0 = x - r * 0.8;
+      if (x0 < B * 0.84) heuvels(x0, B * 0.96, Math.max(1, Math.round((B * 0.96 - x0) / (B * (0.12 + toeval() * 0.1)))), piek + (laag - piek) * (0.2 + toeval() * 0.3));
+      p.push([B, laag]);
+    }
+
+    // Vloeiende lijn door de punten (Catmull-Rom als Bézier)
+    const stukken = p.slice(1).map((q, j) => {
+      const i = j + 1, p0 = p[i - 2] || p[i - 1], p1 = p[i - 1], p3 = p[i + 1] || q;
+      return [p1, [p1[0] + (q[0] - p0[0]) / 6, p1[1] + (q[1] - p0[1]) / 6], [q[0] - (p3[0] - p1[0]) / 6, q[1] - (p3[1] - p1[1]) / 6], q];
+    });
+    const d = `M${p[0][0].toFixed(1)},${p[0][1].toFixed(1)} ` + stukken.map(([, c1, c2, q]) =>
+      `C${c1[0].toFixed(1)},${c1[1].toFixed(1)} ${c2[0].toFixed(1)},${c2[1].toFixed(1)} ${q[0].toFixed(1)},${q[1].toFixed(1)}`).join(" ");
+
+    // Steunen: van het laagste punt van de baan recht naar beneden (bij hout: met kruisen)
+    const houten = t === "Houten achtbaan";
+    const steunen = [];
+    for (let x = 10; x < B; x += houten ? 16 : 22) {
+      const ys = p.filter((q, i) => i && Math.min(p[i - 1][0], q[0]) <= x && Math.max(p[i - 1][0], q[0]) >= x).map((q) => q[1]);
+      if (!ys.length) continue;
+      const y = Math.max(...ys);
+      if (grond - y > 10) steunen.push([x, y]);
+    }
+    let lijnen = steunen.map(([x, y]) => `<line x1="${x}" y1="${(y + 5).toFixed(1)}" x2="${x}" y2="${grond}"/>`).join("");
+    if (houten) {
+      lijnen += steunen.slice(1).map(([x, y], i) => {
+        const [x0, y0] = steunen[i], top = (Math.max(y, y0) + 8).toFixed(1);
+        return x - x0 < 20 && grond - top > 12 ? `<line class="kruis" x1="${x0}" y1="${grond}" x2="${x}" y2="${top}"/><line class="kruis" x1="${x0}" y1="${top}" x2="${x}" y2="${grond}"/>` : "";
+      }).join("");
+    }
+
+    // Het treintje: drie wagentjes achter elkaar op de baan (bij hangende banen eronder)
+    const opStuk = ([a0, c1, c2, a1], u) => {
+      const v = 1 - u;
+      const punt = (k) => v * v * v * a0[k] + 3 * v * v * u * c1[k] + 3 * v * u * u * c2[k] + u * u * u * a1[k];
+      const raak = (k) => 3 * v * v * (c1[k] - a0[k]) + 6 * v * u * (c2[k] - c1[k]) + 3 * u * u * (a1[k] - c2[k]);
+      return [punt(0), punt(1), Math.atan2(raak(1), raak(0)) * 180 / Math.PI];
+    };
+    const stuk = stukken[Math.min(trein, stukken.length) - 1];
+    const lengte = Math.hypot(stuk[3][0] - stuk[0][0], stuk[3][1] - stuk[0][1]) || 1;
+    const hangend = /Omgekeerde|Hangende|Vliegende/.test(t);
+    const wagens = [0, 1, 2].map((i) => {
+      const [x, y, hoek] = opStuk(stuk, Math.max(0.05, 0.8 - (i * 21) / lengte));
+      return `<rect x="-9" y="${hangend ? 3 : -13}" width="18" height="9" rx="2.5" transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${hoek.toFixed(1)})"/>`;
+    }).join("");
+    const water = t === "Waterachtbaan" ? `<rect class="ill-water" x="0" y="${grond - 4}" width="${B}" height="${H - grond + 4}"/>` : "";
+    const berg = t === "Alpine coaster" ? `<path class="ill-berg" d="M0,${H} L0,${H * 0.26} L${B * 0.35},${H * 0.12} L${B},${H * 0.62} L${B},${H} Z"/>` : "";
+    const soort = a.status === "gesloten" ? " is-dicht" : a.status === "gepland" ? " is-gepland" : "";
+    const spiegel = toeval() < 0.5 && t !== "Alpine coaster" ? ` transform="translate(${B} 0) scale(-1 1)"` : "";
+    return `<svg class="ill${soort}" viewBox="0 0 ${B} ${H}" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Getekende illustratie: ${esc(t.toLowerCase())}">
+      <g${spiegel}>${berg}${water}<g class="ill-steunen">${lijnen}</g>
+      <line class="ill-grond" x1="0" y1="${grond}" x2="${B}" y2="${grond}"/>
+      <path class="ill-bielzen" d="${d}"/><path class="ill-rails" d="${d}"/><path class="ill-gat" d="${d}"/>
+      <g class="ill-trein">${wagens}</g></g></svg>`;
+  }
+
+  // Maker en licentie van een foto van Commons, in één korte regel
+  const fotoCredit = (a) => (a.fotoInfo ? [a.fotoInfo.maker, a.fotoInfo.licentie].filter(Boolean).join(" · ") : "");
+  const commonsBijschrift = (foto, info) => {
+    const delen = info ? [info.maker || (info.licentie ? "onbekende maker" : ""), info.licentie].filter(Boolean) : [];
+    return `Foto: ${delen.length ? `${esc(delen.join(", "))}, via ` : ""}<a href="${commonsPagina(foto)}">Wikimedia Commons</a>`;
+  };
+  const TEKENING_UITLEG = 'Getekende illustratie: er is nog geen vrije foto van deze achtbaan. Heb je er een gemaakt? <a href="https://commons.wikimedia.org/wiki/Special:UploadWizard">Zet hem op Wikimedia Commons</a>.';
+
   function statusTekst(a) {
     if (a.status === "gesloten") return a.gesloten ? `Gesloten in ${a.gesloten}` : "Gesloten";
     if (a.status === "gepland") return a.geopend ? `Opent in ${a.geopend}` : "Komt nog";
@@ -951,6 +1079,7 @@
     const src = fotoBron(foto, 500);
     const plek = [a.park, a.land].filter(Boolean).join(", ");
     const eigen = eigenPad(foto);
+    const credit = foto === a.foto && !isEigenFoto(foto) ? fotoCredit(a) : "";
     // Afvinkmodus: het hele kaartje is een vinkje, zodat je snel kunt tikken
     const afvink = !!gekozen;
     const tag = afvink ? "label" : "a";
@@ -960,7 +1089,7 @@
       : "";
     return `
       <${tag} class="${klassen}"${afvink ? "" : ` href="${pagina(a)}"`}>${vinkje}
-        <span class="kaart-foto">${src ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async"${eigen ? ` data-eigen="${esc(eigen)}"` : ""}>` : ""}</span>
+        <span class="kaart-foto" data-id="${esc(a.id)}">${src ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async"${eigen ? ` data-eigen="${esc(eigen)}"` : ""}>${credit ? `<span class="foto-credit">${esc(credit)}</span>` : ""}` : illustratie(a)}</span>
         <span class="kaart-tekst">
           <span class="kaart-naam">${esc(a.naam)}</span>
           ${plek ? `<span class="kaart-plek">${esc(plek)}</span>` : ""}
@@ -1227,7 +1356,11 @@
     });
     el.meer.addEventListener("click", () => { st.toon += PER_KEER; toon(true); });
     // Foto's die niet laden: eigen foto nog eens proberen bij GitHub, anders weghalen
-    el.raster.addEventListener("error", (e) => { if (e.target.tagName === "IMG") fotoMislukt(e.target); }, true);
+    el.raster.addEventListener("error", (e) => {
+      if (e.target.tagName !== "IMG") return;
+      const vak = e.target.closest(".kaart-foto"), a = vak && data.perId.get(vak.dataset.id);
+      fotoMislukt(e.target, () => { if (a) vak.innerHTML = illustratie(a); else e.target.remove(); });
+    }, true);
 
     // Terugkomen van een attractiepagina: zelfde plek in de lijst
     let terug = null;
@@ -2092,8 +2225,8 @@
     const fotoVeld = eigenFoto || a.foto;
     const src = fotoBron(fotoVeld, 1280);
     const eigen = eigenPad(fotoVeld);
-    const fotoBijschrift = eigenFoto ? "Eigen foto"
-      : a.foto && !isEigenFoto(a.foto) ? `Foto: <a href="${commonsPagina(a.foto)}">Wikimedia Commons</a>` : "";
+    const fotoBijschrift = eigenFoto || isEigenFoto(a.foto) ? (src ? "Eigen foto" : "")
+      : a.foto ? commonsBijschrift(a.foto, a.fotoInfo) : "";
     const plek = [
       a.park ? `<a href="./?park=${encodeURIComponent(a.parkId || a.park)}#overzicht">${esc(a.park)}</a>` : "",
       a.land ? esc(a.land) : "",
@@ -2106,8 +2239,8 @@
     vak.innerHTML = `
       <nav class="terug" aria-label="Terug"><a href="./#overzicht" id="terug">Alle achtbanen</a></nav>
       <figure class="foto-groot">
-        ${src ? `<img src="${esc(src)}" alt="Foto van ${esc(a.naam)}" id="hoofdfoto"${eigen ? ` data-eigen="${esc(eigen)}"` : ""}>` : '<div class="foto-leeg" role="img" aria-label="Geen foto beschikbaar"></div>'}
-        ${fotoBijschrift ? `<figcaption id="foto-bron">${fotoBijschrift}</figcaption>` : ""}
+        ${src ? `<img src="${esc(src)}" alt="Foto van ${esc(a.naam)}" id="hoofdfoto"${eigen ? ` data-eigen="${esc(eigen)}"` : ""}>` : `<div class="foto-leeg">${illustratie(a, 640, 360)}</div>`}
+        <figcaption id="foto-bron">${src ? fotoBijschrift : TEKENING_UITLEG}</figcaption>
       </figure>
       <header class="titel">
         <div>
@@ -2132,8 +2265,8 @@
 
     const foto = $("#hoofdfoto");
     if (foto) foto.addEventListener("error", () => fotoMislukt(foto, () => {
-      foto.replaceWith(Object.assign(document.createElement("div"), { className: "foto-leeg" }));
-      $("#foto-bron")?.remove();
+      foto.replaceWith(Object.assign(document.createElement("div"), { className: "foto-leeg", innerHTML: illustratie(a, 640, 360) }));
+      $("#foto-bron").innerHTML = TEKENING_UITLEG;
     }));
 
     $("#terug").addEventListener("click", (e) => {
@@ -2175,11 +2308,12 @@
         if (links && !(a.wp && a.wp[w.taal])) links.insertAdjacentHTML("beforeend", `<li><a href="${w.url}">Wikipedia</a></li>`);
       }).catch((e) => console.warn("Wikipedia niet bereikbaar", e));
     }
-    if (!eigenFoto && a.foto && !isEigenFoto(a.foto)) {
+    // Maker en licentie staan meestal al in de gegevens; anders vragen we ze aan Commons
+    if (!eigenFoto && a.foto && !isEigenFoto(a.foto) && !(a.fotoInfo && a.fotoInfo.licentie)) {
       onthoud(`foto:${a.foto}`, () => haalFotoInfo(a.foto)).then((info) => {
         const bron = $("#foto-bron");
-        if (!bron || (!info.maker && !info.licentie)) return;
-        bron.innerHTML = `Foto: ${esc(info.maker || "onbekende maker")}${info.licentie ? `, ${esc(info.licentie)}` : ""}, via <a href="${commonsPagina(a.foto)}">Wikimedia Commons</a>`;
+        if (!bron || !$("#hoofdfoto") || (!info.maker && !info.licentie)) return;
+        bron.innerHTML = commonsBijschrift(a.foto, info);
       }).catch((e) => console.warn("Commons niet bereikbaar", e));
     }
   }
