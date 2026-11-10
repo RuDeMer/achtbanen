@@ -6,8 +6,20 @@ window.SITE = {
   naam: "Rubens Achtbanen",
 
   // Je GitHub-gebruikersnaam en de naam van deze repository.
-  // Die worden gebruikt voor de knop "Zet op mijn lijst".
+  // Die worden gebruikt voor beheer: achtbanen toevoegen, foto's, splitsen en verbergen.
   githubGebruiker: "RuDeMer",
   githubRepo: "achtbanen",
   branch: "main",
+
+  // Accounts voor vrienden (Supabase). Laat leeg zolang je Supabase nog niet hebt
+  // ingesteld: de site werkt dan zoals altijd met data/gereden.json.
+  // Beide waarden vind je in Supabase bij Project Settings > API Keys (de sleutel)
+  // en Project Settings > Data API (de URL).
+  // Alleen de publieke sleutel (sb_publishable_…) hoort hier. De geheime sleutel
+  // (sb_secret_… of service_role) komt NOOIT in dit bestand of ergens anders in de code.
+  supabaseUrl: "",
+  supabaseSleutel: "",
+
+  // Jouw gebruikersnaam op de site. De startpagina toont de credits van dit profiel.
+  eigenaar: "ruben",
 };

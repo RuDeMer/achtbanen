@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://commons.wikimedia.org https://upload.wikimedia.org https://tile.openstreetmap.org https://raw.githubusercontent.com; connect-src 'self' https://api.github.com https://www.wikidata.org https://*.wikipedia.org https://commons.wikimedia.org; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://commons.wikimedia.org https://upload.wikimedia.org https://tile.openstreetmap.org https://raw.githubusercontent.com; connect-src 'self' https://*.supabase.co https://api.github.com https://www.wikidata.org https://*.wikipedia.org https://commons.wikimedia.org; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="robots" content="noindex">
   <title>Beheer | Rubens Achtbanen</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎢</text></svg>">
@@ -25,7 +25,7 @@
     <header class="titel">
       <div>
         <h1>Beheer</h1>
-        <p class="plek">Alleen voor jou. Met een token van GitHub sla je ritten rechtstreeks op, zonder kopiëren en plakken.</p>
+        <p class="plek">Alleen voor jou. Met een token van GitHub voeg je achtbanen toe, zet je eigen foto's erbij, en splits of verberg je banen. Zonder accounts (Supabase) sla je hier ook je ritten mee op.</p>
       </div>
     </header>
 
@@ -62,6 +62,7 @@
     <p>Gegevens: <a href="https://www.wikidata.org">Wikidata</a> (CC0) en <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap-bijdragers (ODbL)</a>.</p>
   </footer>
 
+  <script src="assets/vendor/supabase.js" defer></script>
   <script src="config.js" defer></script>
   <script src="assets/site.js" defer></script>
 </body>

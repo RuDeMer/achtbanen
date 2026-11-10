@@ -1,0 +1,78 @@
+name: Supabase controleren en reservekopie
+
+# Elke dag: kijken of de database bereikbaar is. Lukt dat niet (bijvoorbeeld
+# omdat het gratis project op pauze staat), dan mislukt deze run en stuurt
+# GitHub je een mail. Het dagelijkse verzoek helpt ook om pauzeren te voorkomen.
+#
+# Elke maandag (en als je hem met de hand start): een reservekopie van alle
+# profielen en ritten. Die wordt versleuteld met het wachtwoord uit het geheim
+# RESERVEKOPIE_WACHTWOORD en 90 dagen bewaard bij deze run (Artifacts).
+# Zonder dat geheim wordt er geen kopie bewaard, zodat er nooit iets
+# onversleuteld online komt. Je eigen ritten gaan ook naar data/gereden.json.
+
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reservekopie
+  cancel-in-progress: false
+
+jobs:
+  controleren:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Bestanden ophalen
+        uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Is Supabase bereikbaar?
+        run: python3 scripts/reservekopie.py controleer
+
+      - name: Reservekopie maken (maandag of met de hand)
+        id: kopie
+        env:
+          WACHTWOORD: ${{ secrets.RESERVEKOPIE_WACHTWOORD }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && [ "$(date -u +%u)" != "1" ]; then
+            echo "Vandaag geen reservekopie (alleen op maandag)."
+            exit 0
+          fi
+          python3 scripts/reservekopie.py kopie "$RUNNER_TEMP/kopie"
+          if [ -z "$WACHTWOORD" ]; then
+            echo "::warning::Er is geen geheim RESERVEKOPIE_WACHTWOORD. De kopie wordt niet bewaard. Zie de README: Reservekopie."
+            exit 0
+          fi
+          command -v 7z >/dev/null || sudo apt-get install -y -qq p7zip-full >/dev/null
+          datum=$(date -u +%Y-%m-%d)
+          cd "$RUNNER_TEMP/kopie"
+          7z a -t7z -mhe=on -p"$WACHTWOORD" "$RUNNER_TEMP/reservekopie-$datum.7z" ./*.json >/dev/null
+          echo "bestand=$RUNNER_TEMP/reservekopie-$datum.7z" >> "$GITHUB_OUTPUT"
+          echo "naam=reservekopie-$datum" >> "$GITHUB_OUTPUT"
+
+      - name: Versleutelde kopie bewaren (90 dagen)
+        if: steps.kopie.outputs.bestand != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.kopie.outputs.naam }}
+          path: ${{ steps.kopie.outputs.bestand }}
+          retention-days: 90
+          compression-level: 0
+
+      - name: Je eigen credits in data/gereden.json
+        run: |
+          if git diff --quiet -- data/gereden.json; then
+            echo "data/gereden.json is niet veranderd."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/gereden.json
+          git commit -m "Reservekopie van je credits bijgewerkt"
+          git pull --rebase origin main
+          git push origin HEAD:main

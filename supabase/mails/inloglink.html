@@ -1,0 +1,10 @@
+<!--
+  Mail met de inloglink. Plak dit in Supabase bij
+  Authentication > Emails > Templates > Magic link (of "Magic Link or OTP").
+  Onderwerp (Subject): Je inloglink voor Rubens Achtbanen
+-->
+<h2>Inloggen bij Rubens Achtbanen</h2>
+<p>Tik op de knop om in te loggen. De link werkt één keer en een uur lang.</p>
+<p><a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:12px 20px;background:#13203f;color:#ffffff;border-radius:6px;text-decoration:none;font-weight:bold">Inloggen</a></p>
+<p>Werkt de knop niet? Typ dan op de site deze code: <strong style="font-size:20px;letter-spacing:2px">{{ .Token }}</strong></p>
+<p style="color:#4b5a7a">Heb je niet geprobeerd in te loggen? Dan kun je deze mail gewoon negeren.</p>

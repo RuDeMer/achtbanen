@@ -1099,7 +1099,7 @@ def zoek_dubbel_extra(alle, extra, tel):
 #   5. een foto op Commons met de naam van de baan én van het park in de bestandsnaam
 # Daarna wordt elk gekozen bestand bij Commons gecontroleerd: het moet er echt
 # staan en een vrije licentie hebben. Alleen de bestandsnaam wordt bewaard.
-# Je eigen foto (in gereden.json) gaat op de site altijd voor.
+# Je eigen foto (in data/fotos.json) gaat op de site altijd voor.
 
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 WIKIPEDIA_TALEN = ["nl", "en", "de", "fr", "es", "it", "pl", "sv", "pt", "ja", "zh"]
@@ -1448,6 +1448,40 @@ def lees_json(pad):
         return None
 
 
+def supabase_codes():
+    """Codes van alle achtbanen waar iemand (jij of een vriend) een rit op heeft in
+    Supabase. Leest met de publieke sleutel uit config.js; die gegevens zijn openbaar.
+    Lukt het niet, dan een lege lijst (en dan telt alleen gereden.json)."""
+    try:
+        tekst = (MAP / "config.js").read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    url = re.search(r'supabaseUrl:\s*"(https://[a-z0-9-]+\.supabase\.co)/?"', tekst)
+    sleutel = re.search(r'supabaseSleutel:\s*"([^"]+)"', tekst)
+    if not url or not sleutel:
+        return set()
+    if sleutel.group(1).startswith("sb_secret_"):
+        print("  Let op: in config.js staat een GEHEIME Supabase-sleutel. Haal hem weg en maak een nieuwe!")
+        return set()
+    codes, van = set(), 0
+    try:
+        while True:
+            adres = f"{url.group(1)}/rest/v1/ritten?select=achtbaan&order=id&limit=1000&offset={van}"
+            verzoek = urllib.request.Request(adres, headers={
+                "apikey": sleutel.group(1), "Accept": "application/json", "User-Agent": USER_AGENT})
+            with urllib.request.urlopen(verzoek, timeout=60) as antwoord:
+                rijen = json.load(antwoord)
+            codes.update(r["achtbaan"] for r in rijen if isinstance(r, dict) and r.get("achtbaan"))
+            if len(rijen) < 1000:
+                break
+            van += 1000
+    except (OSError, ValueError, urllib.error.URLError) as fout:
+        print(f"  Supabase niet bereikbaar ({fout}); alleen gereden.json telt voor het bewaren van credits")
+        return set()
+    print(f"  Supabase: {len(codes)} verschillende achtbanen met ritten")
+    return codes
+
+
 def bouw(vorige, tel):
     vorige_lijst = vorige.get("achtbanen", []) if vorige else []
     vorige_per_id = {a["id"]: a for a in vorige_lijst}
@@ -1588,21 +1622,23 @@ def bouw(vorige, tel):
     aliassen.update({k: v for k, v in vr_doel.items() if v in nieuwe_ids})
     aliassen.update(zoek_dubbel_extra(alle, extra, tel))
 
-    # Je credits mogen nooit verdwijnen: staat een id uit gereden.json nergens
-    # meer in, dan blijft de regel van de vorige keer staan.
+    # Credits mogen nooit verdwijnen: staat een id uit gereden.json of uit de ritten
+    # in Supabase (van jou en je vrienden) nergens meer in, dan blijft de regel van
+    # de vorige keer staan.
     extra_ids = {x.get("id") for x in extra}
     spoor_ids = {f"{q}-{n}" for q, namen in splitsen.items() for n in range(1, len(namen) + 1)}
-    for rit in (lees_json(GEREDEN) or {}).get("gereden") or []:
-        i = rit.get("id") if isinstance(rit, dict) else None
+    gereden_ids = [rit.get("id") for rit in (lees_json(GEREDEN) or {}).get("gereden") or [] if isinstance(rit, dict)]
+    gereden_ids += sorted(supabase_codes() - set(gereden_ids))
+    for i in gereden_ids:
         if not i or i in nieuwe_ids or i in aliassen or i in extra_ids or i in spoor_ids:
             continue
         if i in vorige_per_id:
             alle.append(vorige_per_id[i])
             nieuwe_ids.add(i)
             tel["behouden_voor_gereden"] += 1
-            print(f"  {i} ({vorige_per_id[i]['naam']}) staat niet meer in de bronnen, maar wel in gereden.json: blijft staan")
+            print(f"  {i} ({vorige_per_id[i]['naam']}) staat niet meer in de bronnen, maar iemand heeft hem gereden: blijft staan")
         else:
-            print(f"  Let op: {i} uit gereden.json is onbekend")
+            print(f"  Let op: {i} uit de ritten is onbekend")
 
     zoek_fotos(alle, {a["id"] for a in wd}, vorige_per_id, tel)
 

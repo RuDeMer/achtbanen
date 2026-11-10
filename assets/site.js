@@ -250,6 +250,109 @@
     return tekst == null ? null : leesJsonTekst(tekst, pad);
   }
 
+  /* ---------- Accounts en credits van iedereen (Supabase) ----------
+     Inloggen gaat met een link per e-mail, zonder wachtwoord. Alleen wie is
+     uitgenodigd heeft een account. In config.js staat alleen de publieke sleutel;
+     de database zelf (row level security) zorgt dat iedereen alleen zijn eigen
+     gegevens kan wijzigen. Staat Supabase niet in config.js, dan werkt de site
+     zoals vroeger met data/gereden.json. */
+  const sbAan = !!(window.supabase && /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(SITE.supabaseUrl || "") &&
+    /^(sb_publishable_|eyJ)/.test(SITE.supabaseSleutel || ""));
+  if (/^sb_secret_/.test(SITE.supabaseSleutel || "")) console.error("In config.js staat een GEHEIME sleutel. Haal hem meteen weg en maak in Supabase een nieuwe aan.");
+
+  // Kwam je binnen via een verlopen of al gebruikte link? Dat staat in het adres.
+  // Eerst bewaren, want daarna ruimt de site het adres op.
+  const adresHash = new URLSearchParams(location.hash.slice(1));
+  const LOGIN_MELDING = "achtbanen-login-melding";
+  if (adresHash.get("error_code") || adresHash.get("error_description")) {
+    const verlopen = /expired|invalid/i.test(adresHash.get("error_code") + adresHash.get("error_description"));
+    try {
+      sessionStorage.setItem(LOGIN_MELDING, verlopen
+        ? "Deze inloglink is verlopen of al gebruikt. Vraag hieronder een nieuwe aan. Tip: een link werkt maar één keer en een uur lang."
+        : `Inloggen lukte niet: ${adresHash.get("error_description") || adresHash.get("error_code")}.`);
+    } catch (e) { /* geen opslag */ }
+    history.replaceState(null, "", location.pathname + location.search);
+    if (PAGINA !== "account") { location.replace("account.html"); return; }
+  }
+  const welkeLink = adresHash.get("type"); // magiclink of invite
+
+  const sb = sbAan ? window.supabase.createClient(SITE.supabaseUrl.replace(/\/$/, ""), SITE.supabaseSleutel, {
+    auth: { storageKey: "achtbanen-sessie", flowType: "implicit", detectSessionInUrl: true, persistSession: true, autoRefreshToken: true },
+  }) : null;
+
+  let sessie = null; // ingelogd? (van Supabase)
+  let ik = null;     // je eigen profiel: { id, gebruikersnaam, weergavenaam, in_ranglijst }
+
+  const PROFIEL_VELDEN = "id,gebruikersnaam,weergavenaam,in_ranglijst";
+  const GEBRUIKERSNAAM = /^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$/;
+  // Tekst van gebruikers: geen onzichtbare tekens, geen dubbele spaties
+  const netteTekst = (s) => String(s ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069]/g, "").replace(/\s+/g, " ").trim();
+
+  function metTijd(vraag) {
+    return typeof AbortSignal !== "undefined" && AbortSignal.timeout ? vraag.abortSignal(AbortSignal.timeout(20000)) : vraag;
+  }
+
+  // Een fout van Supabase in gewone taal
+  function sbFout(e, wat) {
+    const code = String(e.code || e.error_code || "");
+    const bericht = String(e.message || e.msg || "");
+    let tekst;
+    if (code === "23505" && /gebruikersnaam/.test(bericht)) tekst = "Deze gebruikersnaam is al bezet. Kies een andere.";
+    else if (code === "23505" && /profielen_pkey/.test(bericht)) tekst = "Je hebt al een profiel. Laad de pagina opnieuw.";
+    else if (code === "23514" || code === "22P02" || code === "22003") tekst = "Een van de velden klopt niet. Controleer wat je hebt ingevuld.";
+    else if (code === "23503") tekst = "Maak eerst je profiel op de accountpagina.";
+    else if (code === "P0001") tekst = bericht;
+    else if (code === "42501" || e.status === 401 || /^PGRST30/.test(code) || /jwt/i.test(bericht)) tekst = "Je bent niet (meer) ingelogd. Log opnieuw in op de accountpagina.";
+    else if (e.status === 429 || /rate_limit/.test(code)) tekst = "Even te veel verzoeken. Wacht een minuut en probeer het dan opnieuw.";
+    else if (/fetch|network|load failed|abort|timeout/i.test(bericht) || e.name === "AbortError" || e.name === "TimeoutError") {
+      tekst = "De accounts zijn nu niet bereikbaar. Is je internet weg? Of de database staat even op pauze; probeer het later nog eens.";
+    } else tekst = bericht || "Onbekende fout.";
+    return Object.assign(new Error(wat ? `${wat}: ${tekst}` : tekst), { code, status: e.status });
+  }
+
+  async function sbVraag(vraag, wat) {
+    let r;
+    try { r = await vraag; } catch (e) { throw sbFout(e, wat); }
+    if (r.error) throw sbFout(r.error, wat);
+    return r.data;
+  }
+
+  async function haalProfiel(waar) {
+    let q = sb.from("profielen").select(PROFIEL_VELDEN);
+    q = waar.id ? q.eq("id", waar.id) : q.eq("gebruikersnaam", String(waar.gebruikersnaam || "").toLowerCase());
+    return sbVraag(metTijd(q).maybeSingle(), "Profiel ophalen");
+  }
+
+  let accountFout = "";
+  async function startAccount() {
+    if (!sb) return true;
+    try {
+      const { data } = await sb.auth.getSession();
+      sessie = data.session || null;
+      if (sessie) ik = await haalProfiel({ id: sessie.user.id });
+      // Sessie zonder profiel: bestaat het account nog? (Misschien verwijderd in Supabase.)
+      if (sessie && !ik) {
+        const { error } = await sb.auth.getUser();
+        if (error && (error.status === 401 || error.status === 403 || /not.exist|user_not_found|bad_jwt/i.test(`${error.code} ${error.message}`))) {
+          await sb.auth.signOut({ scope: "local" }).catch(() => {});
+          try { localStorage.removeItem("achtbanen-sessie"); } catch (e) { /* geen opslag */ }
+          sessie = null;
+          try { sessionStorage.setItem(LOGIN_MELDING, "Je account bestaat niet meer. Ben je opnieuw uitgenodigd? Log dan hieronder in."); } catch (e) { /* geen opslag */ }
+          if (PAGINA !== "account") { location.replace("account.html"); return false; }
+        }
+      }
+    } catch (e) {
+      console.warn(e);
+      accountFout = e.message;
+    }
+    // Net binnen via een uitnodiging of een link, maar nog geen profiel: eerst een naam kiezen
+    if (sessie && !ik && !accountFout && !["account", "privacy"].includes(PAGINA)) {
+      location.replace("account.html");
+      return false;
+    }
+    return true;
+  }
+
   /* ---------- Gegevens laden ---------- */
 
   async function haalJson(pad, verplicht) {
@@ -276,12 +379,13 @@
   let geladen = null;
   function laadAlles() {
     geladen = geladen || (async () => {
-      const [basis, extra, mijn, splitsBestand, verborgenBestand] = await Promise.all([
+      const [basis, extra, mijn, splitsBestand, verborgenBestand, fotoBestand] = await Promise.all([
         haalJson("data/achtbanen.json", true),
         laadEigen("data/extra.json"),
         laadEigen("data/gereden.json"),
         laadEigen("data/splitsen.json"),
         laadEigen("data/verborgen.json"),
+        laadEigen("data/fotos.json"),
       ]);
       // Verwijzingen: oude ids (bijvoorbeeld een OSM-baan die nu in Wikidata staat, of een
       // regel uit extra.json die nu in de bronnen staat) wijzen naar de achtbaan van nu
@@ -320,8 +424,12 @@
         lijst, perId, aliassen, sporenVan, verborgen, verborgenBanen, echteIds: new Set(lijst.map((a) => a.id)),
         voorstellen: basis.splitsvoorstellen || {},
         bijgewerkt: basis.bijgewerkt, details: basis.details, extra: (extra && extra.achtbanen) || [],
+        // Je credits uit gereden.json: zonder Supabase de echte lijst, met Supabase de reservekopie
+        jsonRitten: ((mijn && mijn.gereden) || []).filter((r) => r && r.id),
+        persoon: null,
       };
-      zetRitten(data, (mijn && mijn.gereden) || []);
+      zetFotos(data, (fotoBestand && fotoBestand.fotos) || []);
+      zetRitten(data, data.jsonRitten);
       if (apiWaarschuwing) setTimeout(() => toast(apiWaarschuwing, true), 400);
       return data;
     })();
@@ -366,8 +474,217 @@
 
   async function bewaarRitten(data, wijzig, bericht) {
     const nieuw = await wijzigJson("data/gereden.json", "gereden", wijzig, bericht);
+    data.jsonRitten = nieuw.gereden;
+    if (data.persoon) data.persoon.ritten = nieuw.gereden;
     zetRitten(data, nieuw.gereden);
   }
+
+  // Je eigen foto's per achtbaan (data/fotos.json, alleen via beheer). Een foto die nog
+  // bij een oude rit in gereden.json staat, telt ook.
+  function zetFotos(data, fotos) {
+    data.fotos = fotos.filter((f) => f && f.id && eigenPad(f.foto));
+    for (const a of data.lijst) delete a.eigenFoto;
+    for (const r of data.jsonRitten) if (r.foto) for (const a of banenVanRit(data, r.id)) a.eigenFoto = r.foto;
+    for (const f of data.fotos) {
+      const a = data.perId.get(f.id) || data.verborgenBanen.get(f.id);
+      if (a) a.eigenFoto = f.foto;
+    }
+  }
+
+  /* ---------- Ritten in Supabase ----------
+     In de database heet een rit { id, achtbaan, datum, cijfer, notitie }. Op de site
+     gebruiken we dezelfde vorm als in gereden.json: { id: <achtbaan>, datum, cijfer, notitie },
+     met het rijnummer uit de database er onzichtbaar bij. */
+  const ACHTBAAN_ID = /^(Q[1-9][0-9]*|osm-(node|way|relation)-[1-9][0-9]*|x-[a-z0-9]+(-[a-z0-9]+)*)(-[1-9][0-9]?)?$/;
+  function naarRit(r) {
+    const rit = { id: r.achtbaan };
+    if (r.datum) rit.datum = r.datum;
+    if (r.cijfer != null) rit.cijfer = Number(r.cijfer);
+    if (r.notitie) rit.notitie = r.notitie;
+    Object.defineProperty(rit, "_rij", { value: r.id, enumerable: false });
+    return rit;
+  }
+  // Zelfde regels als in de database: leeg, 2006, 2006-07 of 2006-07-14 (een echte dag)
+  function geldigeDatum(d) {
+    if (!d) return true;
+    const m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(String(d));
+    if (!m || +m[1] < 1900 || +m[1] > 2100) return false;
+    if (!m[2]) return true;
+    if (+m[2] < 1 || +m[2] > 12) return false;
+    return !m[3] || new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDate() === +m[3];
+  }
+  function naarRij(rit) {
+    if (!ACHTBAAN_ID.test(rit.id || "") || rit.id.length > 100) throw new Error(`Onbekende achtbaan-code: ${rit.id}`);
+    if (!geldigeDatum(rit.datum)) throw new Error(`Deze datum klopt niet: ${rit.datum}`);
+    if (rit.cijfer != null && !(Number(rit.cijfer) >= 1 && Number(rit.cijfer) <= 10)) throw new Error("Een cijfer moet tussen 1 en 10 liggen.");
+    const notitie = netteTekst(rit.notitie).slice(0, 200);
+    return { achtbaan: rit.id, datum: rit.datum || null, cijfer: rit.cijfer ?? null, notitie: notitie || null };
+  }
+
+  // Alle ritten van één persoon (Supabase geeft er hooguit 1000 per keer)
+  async function haalRitten(gebruiker) {
+    const alle = [];
+    for (let van = 0; ; van += 1000) {
+      const rijen = await sbVraag(metTijd(sb.from("ritten").select("id,achtbaan,datum,cijfer,notitie")
+        .eq("gebruiker", gebruiker).order("id").range(van, van + 999)), "Credits ophalen");
+      alle.push(...rijen);
+      if (rijen.length < 1000) break;
+    }
+    return alle.map(naarRit);
+  }
+
+  // Wiens credits toont deze pagina, en mag je ze hier aanpassen?
+  //   { profiel, ritten, bron: "supabase" | "json", bewerkbaar, nogOverzetten }
+  async function laadPersoon(data, profiel) {
+    const ritten = await haalRitten(profiel.id);
+    if (profiel.gebruikersnaam === SITE.eigenaar && !ritten.length && data.jsonRitten.length) {
+      // Je credits staan nog alleen in gereden.json: die tonen tot je ze hebt overgezet
+      return { profiel, ritten: data.jsonRitten, bron: "json", bewerkbaar: false, nogOverzetten: true };
+    }
+    return { profiel, ritten, bron: "supabase", bewerkbaar: !!ik && ik.id === profiel.id };
+  }
+  async function laadEigenaar(data) {
+    if (!sbAan) return { profiel: null, ritten: data.jsonRitten, bron: "json", bewerkbaar: beheer };
+    try {
+      const p = await haalProfiel({ gebruikersnaam: SITE.eigenaar });
+      if (p) return await laadPersoon(data, p);
+      return { profiel: null, ritten: data.jsonRitten, bron: "json", bewerkbaar: false, nogOverzetten: true };
+    } catch (e) {
+      console.warn(e);
+      return { profiel: null, ritten: data.jsonRitten, bron: "json", bewerkbaar: false,
+        storing: "De accounts zijn even niet bereikbaar. Je ziet nu de reservekopie van de credits." };
+    }
+  }
+  function zetPersoon(data, persoon) {
+    data.persoon = persoon;
+    zetRitten(data, persoon.ritten);
+    if (persoon.storing) setTimeout(() => toast(persoon.storing, true), 600);
+  }
+  const magRitten = (data) => !!(data.persoon && data.persoon.bewerkbaar);
+  const inSupabase = (data) => !!(data.persoon && data.persoon.bron === "supabase");
+
+  async function herlaadRitten(data) {
+    const p = data.persoon;
+    if (inSupabase(data)) p.ritten = await haalRitten(p.profiel.id);
+    zetRitten(data, p.ritten);
+  }
+
+  // Een rit op de hele baan bij een gesplitste baan: voor welke sporen telt hij?
+  function sporenVanRit(data, a, rit) {
+    if (!a.deelVan || rit.id === a.id) return null;
+    const sporen = banenVanRit(data, rit.id);
+    return sporen.length >= 2 ? sporen : null;
+  }
+
+  /* De ritbron: zonder Supabase gaat alles naar gereden.json op GitHub (met je token),
+     met Supabase naar je eigen account. Dezelfde knoppen, hetzelfde venster. */
+  const ritBron = {
+    // Nieuwe ritten. "alleNieuw" laat ritten weg voor banen die al op je lijst staan.
+    async voegToe(data, ritten, bericht, alleNieuw) {
+      if (!inSupabase(data)) {
+        return bewaarRitten(data, (lijst) => {
+          if (!alleNieuw) return [...lijst, ...ritten];
+          const al = new Set(lijst.map((r) => r && data.perId.get(r.id)).filter(Boolean));
+          return [...lijst, ...ritten.filter((r) => !al.has(data.perId.get(r.id)))];
+        }, bericht);
+      }
+      let nieuw = ritten;
+      if (alleNieuw) {
+        await herlaadRitten(data); // misschien heb je intussen op een ander apparaat iets afgevinkt
+        const al = new Set(data.persoon.ritten.map((r) => data.perId.get(r.id)).filter(Boolean));
+        nieuw = ritten.filter((r) => !al.has(data.perId.get(r.id)));
+      }
+      if (nieuw.length) await sbVraag(sb.from("ritten").insert(nieuw.map(naarRij)), "Opslaan lukte niet");
+      await herlaadRitten(data);
+    },
+
+    async wijzig(data, a, oud, rit, bericht) {
+      if (!inSupabase(data)) {
+        return bewaarRitten(data, (lijst) => {
+          const eigen = ritVoorDitSpoor(data, lijst, oud, a);
+          if (eigen !== oud) rit.id = a.id;
+          const i = vindRit(lijst, eigen);
+          if (i < 0) throw new Error("Deze rit is intussen op een andere plek gewijzigd. Laad de pagina opnieuw en probeer het nog eens.");
+          lijst[i] = rit;
+          return lijst;
+        }, bericht);
+      }
+      const sporen = sporenVanRit(data, a, oud);
+      const velden = naarRij({ ...rit, id: sporen ? a.id : oud.id });
+      await sbWijzigRij(oud._rij, velden);
+      // De rit gold voor alle sporen: de andere sporen houden hun eigen kopie
+      if (sporen) {
+        const kopieen = sporen.filter((s) => s !== a).map((s) => naarRij({ ...oud, id: s.id }));
+        if (kopieen.length) await sbVraag(sb.from("ritten").insert(kopieen), "Opslaan lukte niet");
+      }
+      await herlaadRitten(data);
+    },
+
+    async verwijder(data, a, oud, bericht) {
+      if (!inSupabase(data)) {
+        return bewaarRitten(data, (lijst) => {
+          const i = vindRit(lijst, ritVoorDitSpoor(data, lijst, oud, a));
+          if (i < 0) throw new Error("Deze rit staat niet meer in gereden.json. Laad de pagina opnieuw.");
+          lijst.splice(i, 1);
+          return lijst;
+        }, bericht);
+      }
+      const sporen = sporenVanRit(data, a, oud);
+      if (sporen) {
+        const kopieen = sporen.filter((s) => s !== a).map((s) => naarRij({ ...oud, id: s.id }));
+        if (kopieen.length) await sbVraag(sb.from("ritten").insert(kopieen), "Verwijderen lukte niet");
+      }
+      const weg = await sbVraag(sb.from("ritten").delete().eq("id", oud._rij).select("id"), "Verwijderen lukte niet");
+      if (!weg.length) throw new Error("Deze rit bestaat niet meer. Laad de pagina opnieuw.");
+      await herlaadRitten(data);
+    },
+  };
+
+  async function sbWijzigRij(rij, velden) {
+    const d = await sbVraag(sb.from("ritten").update(velden).eq("id", rij).select("id"), "Opslaan lukte niet");
+    if (!d.length) throw new Error("Deze rit bestaat niet meer. Laad de pagina opnieuw.");
+  }
+
+  /* ---------- Iedereen: profielen en ritten van alle vrienden ---------- */
+
+  async function haalAlles(tabel, velden, wat) {
+    const alle = [];
+    for (let van = 0; ; van += 1000) {
+      const rijen = await sbVraag(metTijd(sb.from(tabel).select(velden).order("id").range(van, van + 999)), wat);
+      alle.push(...rijen);
+      if (rijen.length < 1000) return alle;
+    }
+  }
+  let iedereenBelofte = null;
+  function laadIedereen() {
+    iedereenBelofte = iedereenBelofte || Promise.all([
+      haalAlles("profielen", PROFIEL_VELDEN, "Vrienden ophalen"),
+      haalAlles("ritten", "id,gebruiker,achtbaan", "Credits van vrienden ophalen"),
+    ]).then(([profielen, ritten]) => ({ profielen, ritten }));
+    iedereenBelofte.catch(() => { iedereenBelofte = null; }); // later opnieuw proberen
+    return iedereenBelofte;
+  }
+
+  // Per persoon de banen die hij of zij gereden heeft, op dezelfde manier geteld als de teller
+  function banenPerPersoon(data, iedereen) {
+    const per = new Map(iedereen.profielen.map((p) => [p.id, { profiel: p, banen: new Set() }]));
+    for (const r of iedereen.ritten) {
+      const x = per.get(r.gebruiker);
+      if (x) for (const a of banenVanRit(data, r.achtbaan)) x.banen.add(a);
+    }
+    // De eigenaar zonder ritten in Supabase: zijn credits staan nog in gereden.json
+    for (const x of per.values()) {
+      if (x.profiel.gebruikersnaam === SITE.eigenaar && !x.banen.size) {
+        for (const r of data.jsonRitten) for (const a of banenVanRit(data, r.id)) x.banen.add(a);
+      }
+    }
+    return per;
+  }
+  const opWeergavenaam = (x, y) => x.weergavenaam.localeCompare(y.weergavenaam, TAAL);
+
+  // Wordt er na het opslaan nog iets gepubliceerd (GitHub), of zie je het meteen (Supabase)?
+  const opgeslagenTekst = (data, wat = "Opgeslagen") =>
+    inSupabase(data) ? `${wat}.` : `${wat}. Over een paar minuten staat het ook op de openbare site.`;
 
   /* ---------- Startpagina ---------- */
 
@@ -449,15 +766,18 @@
     setTimeout(rit, 500);
   }
 
-  function vulHero(gereden) {
+  const telLanden = (banen) => new Set(banen.map((a) => a.land).filter(Boolean)).size;
+  const telParken = (banen) => new Set(banen.map((a) => a.parkId || a.park).filter(Boolean)).size;
+
+  function vulHero(data) {
+    const gereden = data.gereden;
     const n = gereden.length;
     $("#aantal").textContent = getal(n);
     $("#teller-uitleg").textContent = meervoud(n, "achtbaan gereden", "achtbanen gereden");
-    const landen = new Set(gereden.map((a) => a.land).filter(Boolean)).size;
-    const parken = new Set(gereden.map((a) => a.parkId || a.park).filter(Boolean)).size;
+    const landen = telLanden(gereden), parken = telParken(gereden);
     $("#teller-sub").textContent = n
       ? `in ${landen} ${meervoud(landen, "land", "landen")} en ${parken} ${meervoud(parken, "park", "parken")}`
-      : beheer
+      : magRitten(data)
         ? "De teller staat nog op nul. Kies Afvinken bij Alle achtbanen, of open een achtbaan en kies Zet op mijn lijst."
         : "De teller staat nog op nul.";
   }
@@ -538,7 +858,7 @@
   };
 
   function kaartHtml(a, gekozen) {
-    const foto = a.rit?.foto || a.foto;
+    const foto = a.eigenFoto || a.rit?.foto || a.foto;
     const src = fotoBron(foto, 500);
     const plek = [a.park, a.land].filter(Boolean).join(", ");
     const eigen = eigenPad(foto);
@@ -567,6 +887,7 @@
       zoek: $("#zoek"), land: $("#land"), status: $("#status"), sorteer: $("#sorteer"),
       gereden: $("#alleen-gereden"), raster: $("#raster"), meer: $("#meer"),
       tekst: $("#resultaten-tekst"), park: $("#park-filter"), filters: $(".filters"),
+      door: $("#door"), doorVeld: $("#door-veld"),
     };
 
     const perLand = new Map();
@@ -582,6 +903,7 @@
       sorteer: SORTERINGEN[params.get("sorteer")] ? params.get("sorteer") : "naam",
       gereden: params.get("gereden") === "1",
       park: params.get("park") || "",
+      door: (params.get("door") || "").toLowerCase(),
       toon: PER_KEER,
     };
     el.zoek.value = st.q;
@@ -594,12 +916,14 @@
 
     function bewaarInAdres() {
       const u = new URLSearchParams();
+      if (params.get("wie")) u.set("wie", params.get("wie")); // profielpagina: wie blijft staan
       if (st.q) u.set("q", st.q);
       if (st.land) u.set("land", st.land);
       if (st.status) u.set("status", st.status);
       if (st.sorteer !== "naam") u.set("sorteer", st.sorteer);
       if (st.gereden) u.set("gereden", "1");
       if (st.park) u.set("park", st.park);
+      if (st.door) u.set("door", st.door);
       const qs = u.toString();
       history.replaceState(null, "", location.pathname + (qs ? `?${qs}` : "") + location.hash);
     }
@@ -609,9 +933,35 @@
       return a ? a.park : st.park;
     }
 
+    // Filter "Gereden door …": de banen van één vriend (jezelf: zoals je lijst nu is)
+    let perPersoon = null;
+    const doorProfiel = () => (perPersoon ? [...perPersoon.values()].find((x) => x.profiel.gebruikersnaam === st.door) : null);
+    function doorBanen() {
+      if (!st.door) return null;
+      if (data.persoon && data.persoon.profiel && data.persoon.profiel.gebruikersnaam === st.door) return new Set(data.gereden);
+      const x = doorProfiel();
+      return x ? x.banen : null;
+    }
+    if (sbAan && el.door) {
+      el.doorVeld.hidden = false;
+      el.filters.classList.add("met-door");
+      laadIedereen().then((iedereen) => {
+        perPersoon = banenPerPersoon(data, iedereen);
+        const mensen = iedereen.profielen
+          .filter((p) => p.in_ranglijst || (ik && ik.id === p.id) || p.gebruikersnaam === st.door)
+          .sort(opWeergavenaam);
+        for (const p of mensen) el.door.add(new Option(ik && ik.id === p.id ? `${p.weergavenaam} (ik)` : p.weergavenaam, p.gebruikersnaam));
+        el.door.value = st.door;
+        if (st.door) { st.door = el.door.value; bereken(); toon(false); }
+      }).catch((e) => { console.warn(e); el.doorVeld.hidden = true; el.filters.classList.remove("met-door"); });
+      el.door.addEventListener("change", () => { st.door = el.door.value; ververs(); });
+    }
+
     function bereken() {
       const woorden = zoekbaar(st.q).split(/\s+/).filter(Boolean);
+      const door = doorBanen();
       resultaat = lijst.filter((a) =>
+        (!door || door.has(a)) &&
         (!st.gereden || a.rit) &&
         (!st.land || a.land === st.land) &&
         (!st.status || a.status === st.status) &&
@@ -622,10 +972,11 @@
 
     function toon(alleenNieuwe) {
       const n = resultaat.length;
-      const gefilterd = st.q || st.land || st.status || st.park || st.gereden;
+      const gefilterd = st.q || st.land || st.status || st.park || st.gereden || st.door;
+      const door = st.door && doorProfiel() ? `, gereden door ${doorProfiel().profiel.weergavenaam}` : "";
       el.tekst.textContent = st.gereden
-        ? `${getal(n)} ${meervoud(n, "credit", "credits")}`
-        : `${getal(n)} ${meervoud(n, "achtbaan", "achtbanen")}${gefilterd ? " gevonden" : " in de lijst"}`;
+        ? `${getal(n)} ${meervoud(n, "credit", "credits")}${door}`
+        : `${getal(n)} ${meervoud(n, "achtbaan", "achtbanen")}${gefilterd ? " gevonden" : " in de lijst"}${door}`;
 
       el.park.innerHTML = st.park
         ? `<button class="chip" type="button" id="park-wis">Alleen ${esc(parkNaam())} <span aria-hidden="true">×</span><span class="sr">filter wissen</span></button>`
@@ -654,16 +1005,22 @@
       tekenAfvink();
     }
 
-    /* ---------- Afvinkmodus (alleen beheer) ----------
+    /* ---------- Afvinkmodus (je eigen lijst) ----------
        Een vinkje op elk kaartje. Je keuze blijft bewaard als je filtert of de pagina
-       herlaadt. Opslaan zet alles in één keer (één commit) in gereden.json. */
-    const AFVINK = "achtbanen-afvink";
+       herlaadt. Opslaan zet alles in één keer in je account (zonder Supabase: in één
+       commit in gereden.json). Achtbaan ontbreekt is alleen voor beheer. */
+    const kanAfvinken = magRitten(data);
+    const eigenaarMoetOverzetten = !kanAfvinken && !!(data.persoon && data.persoon.nogOverzetten && ik && ik.gebruikersnaam === SITE.eigenaar);
+    const balkNodig = kanAfvinken || beheer || eigenaarMoetOverzetten;
+    const AFVINK = `achtbanen-afvink${data.persoon && data.persoon.profiel ? `-${data.persoon.profiel.id}` : ""}`;
     const af = { aan: false, gekozen: new Set() };
-    if (beheer) {
-      try {
-        const b = JSON.parse(opslag.lees(AFVINK) || "null");
-        if (b) { af.aan = !!b.aan; af.gekozen = new Set((b.ids || []).filter((id) => data.perId.has(id))); }
-      } catch (e) { /* begin leeg */ }
+    if (balkNodig) {
+      if (kanAfvinken) {
+        try {
+          const b = JSON.parse(opslag.lees(AFVINK) || "null");
+          if (b) { af.aan = !!b.aan; af.gekozen = new Set((b.ids || []).filter((id) => data.perId.has(id))); }
+        } catch (e) { /* begin leeg */ }
+      }
       el.filters.insertAdjacentHTML("afterend", '<div class="beheer-balk" id="beheer-balk"></div>');
       $("#overzicht").insertAdjacentHTML("beforeend", '<div class="afvink-balk" id="afvink-balk" hidden></div>');
     }
@@ -671,12 +1028,15 @@
     const nogTeKiezen = () => resultaat.filter((a) => !a.rit && !af.gekozen.has(a.id));
 
     function tekenAfvink() {
-      if (!beheer) return;
+      if (!balkNodig) return;
       const balk = $("#beheer-balk"), onder = $("#afvink-balk");
       if (!af.aan) {
-        balk.innerHTML = `<button class="knop knop-licht" type="button" id="afvink-aan">Afvinken</button>
-          <button class="knop knop-licht" type="button" id="ontbreekt">Achtbaan ontbreekt</button>
-          <span class="klein">Snel een hele rij achtbanen op je lijst zetten, of er zelf een toevoegen.</span>`;
+        const uitleg = kanAfvinken && beheer ? "Snel een hele rij achtbanen op je lijst zetten, of er zelf een toevoegen."
+          : kanAfvinken ? "Snel een hele rij achtbanen op je lijst zetten." : beheer ? "Staat een achtbaan er niet tussen? Voeg hem zelf toe." : "";
+        balk.innerHTML = `${eigenaarMoetOverzetten ? '<p><strong>Je credits staan nog in gereden.json.</strong> <a href="account.html">Zet ze over naar je account</a>, dan kun je hier weer afvinken.</p>' : ""}
+          ${kanAfvinken ? '<button class="knop knop-licht" type="button" id="afvink-aan">Afvinken</button>' : ""}
+          ${beheer ? '<button class="knop knop-licht" type="button" id="ontbreekt">Achtbaan ontbreekt</button>' : ""}
+          ${uitleg ? `<span class="klein">${uitleg}</span>` : ""}`;
         onder.hidden = true;
         return;
       }
@@ -714,25 +1074,23 @@
       const bericht = banen.length === 1
         ? `Credit afgevinkt: ${banen[0].naam}`
         : `${banen.length} credits afgevinkt\n\n${banen.map((a) => `- ${a.naam}${a.park ? ` (${a.park})` : ""}`).join("\n")}`;
-      const gelukt = await metKnop(knop, fout, "Opslaan…", () => bewaarRitten(data, (ritten) => {
-        // Staat een baan intussen al op je lijst (bijvoorbeeld via je telefoon), dan niet nog een keer
-        const al = new Set(ritten.map((r) => r && data.perId.get(r.id)).filter(Boolean));
-        return [...ritten, ...banen.filter((a) => !al.has(a)).map((a) => (jaar ? { id: a.id, datum: jaar } : { id: a.id }))];
-      }, bericht));
+      // Staat een baan intussen al op je lijst (bijvoorbeeld via je telefoon), dan niet nog een keer
+      const nieuw = banen.map((a) => (jaar ? { id: a.id, datum: jaar } : { id: a.id }));
+      const gelukt = await metKnop(knop, fout, "Opslaan…", () => ritBron.voegToe(data, nieuw, bericht, true));
       if (!gelukt) return;
       af.gekozen.clear();
       bewaarAfvink();
       naWijziging();
       bereken();
       toon(false);
-      toast(`${getal(banen.length)} ${meervoud(banen.length, "credit", "credits")} opgeslagen. Bezoekers zien het over een paar minuten.`, true);
+      toast(`${getal(banen.length)} ${meervoud(banen.length, "credit", "credits")} opgeslagen.${inSupabase(data) ? "" : " Bezoekers zien het over een paar minuten."}`, true);
     }
 
-    if (beheer) {
+    if (balkNodig) {
       $("#overzicht").addEventListener("click", (e) => {
         const knop = e.target.closest("button");
         if (!knop) return;
-        if (knop.id === "afvink-aan") { af.aan = true; bewaarAfvink(); toon(false); }
+        if (knop.id === "afvink-aan" && kanAfvinken) { af.aan = true; bewaarAfvink(); toon(false); }
         if (knop.id === "afvink-stop") {
           if (af.gekozen.size && !confirm(`Stoppen zonder opslaan? Je keuze van ${af.gekozen.size} ${meervoud(af.gekozen.size, "achtbaan", "achtbanen")} gaat verloren.`)) return;
           af.aan = false; af.gekozen.clear(); bewaarAfvink(); toon(false);
@@ -745,7 +1103,7 @@
         }
         if (knop.id === "afvink-niets") { af.gekozen.clear(); bewaarAfvink(); toon(false); }
         if (knop.id === "afvink-opslaan") slaAfvinkOp(knop);
-        if (knop.id === "ontbreekt" || knop.id === "ontbreekt-leeg") openOntbreektVenster(data, st.q);
+        if ((knop.id === "ontbreekt" || knop.id === "ontbreekt-leeg") && beheer) openOntbreektVenster(data, st.q);
       });
       el.raster.addEventListener("change", (e) => {
         const vak = e.target.closest(".afvink-vak");
@@ -759,8 +1117,9 @@
 
     function ververs() { st.toon = PER_KEER; bereken(); toon(false); bewaarInAdres(); }
     function wisAlles() {
-      Object.assign(st, { q: "", land: "", status: "", park: "", gereden: false });
+      Object.assign(st, { q: "", land: "", status: "", park: "", gereden: false, door: "" });
       el.zoek.value = ""; el.land.value = ""; el.status.value = ""; el.gereden.checked = false;
+      if (el.door) el.door.value = "";
       ververs();
     }
 
@@ -809,8 +1168,13 @@
       toonFout($("#raster"), e);
       return;
     }
-    const vulBoven = () => { vulHero(data.gereden); vulFeiten(data.gereden); tekenKaart(data.gereden); };
+    // De startpagina is van de eigenaar: zijn credits uit Supabase, of uit gereden.json
+    zetPersoon(data, await laadEigenaar(data));
+    const vulBoven = () => {
+      vulHero(data); vulFeiten(data.gereden); tekenKaart(data.gereden); tekenProfielKnoppen(data, data.persoon.profiel);
+    };
     vulBoven();
+    tekenRanglijst(data);
     startOverzicht(data, vulBoven);
     if (data.bijgewerkt) $("#bijgewerkt").textContent = `, bijgewerkt op ${datum(data.bijgewerkt)}`;
   }
@@ -873,16 +1237,17 @@
     ].filter(Boolean).join(", ");
   }
 
-  function ritHtml(a) {
+  function ritHtml(a, data) {
+    const mag = magRitten(data);
     if (!a.rit) {
-      return beheer
+      return mag
         ? `<section class="blok"><div class="mijn-rit"><p>Deze staat nog niet op je lijst.</p>
              <button class="knop" type="button" data-rit-nieuw>Zet op mijn lijst</button></div></section>`
         : "";
     }
     const r = a.rit;
     let lijst = "";
-    if (beheer) {
+    if (mag) {
       // Alleen jij: elke rit met een knop om hem te bewerken of te verwijderen
       lijst = `<p>${a.ritten.length === 1 ? "Je rit:" : `${a.ritten.length} keer gereden:`}</p>
         <ul class="ritten ritten-beheer">${a.ritten.map((x, i) => `<li>
@@ -899,7 +1264,7 @@
         ${r.notitie && a.ritten.length === 1 ? `<p class="notitie">${esc(r.notitie)}</p>` : ""}
         ${r.cijfer ? `<p><strong>Mijn cijfer: ${getal(r.cijfer, 1)}/10</strong></p>` : ""}
         ${lijst}
-        ${beheer ? `<button class="knop knop-licht" type="button" data-rit-nieuw>Nog een rit toevoegen</button>` : ""}
+        ${mag ? `<button class="knop knop-licht" type="button" data-rit-nieuw>Nog een rit toevoegen</button>` : ""}
       </div></section>`;
   }
 
@@ -984,23 +1349,12 @@
         <label data-wanneer="datum">Datum <input type="date" id="rit-datum" max="${vandaag()}" value="${esc(wanneer === "datum" ? was.slice(0, 10) : vandaag())}"></label>
         <label>Cijfer van 1 tot 10 (mag leeg) <input type="text" id="rit-cijfer" inputmode="decimal" placeholder="bijvoorbeeld 8,5" value="${esc(v.cijfer != null ? String(v.cijfer).replace(".", ",") : "")}"></label>
         <label>Notitie (mag leeg) <input type="text" id="rit-notitie" maxlength="200" placeholder="Bijvoorbeeld: voorste rij, regen" value="${esc(v.notitie || "")}"></label>
-        <div class="foto-kiezen">
-          <span class="foto-kiezen-titel">Eigen foto (mag leeg)</span>
-          <div class="foto-kiezen-rij">
-            <span class="foto-voorbeeld" id="rit-voorbeeld">${v.foto ? `<img src="${esc(fotoBron(v.foto, 300))}" alt="Je foto"${eigenPad(v.foto) ? ` data-eigen="${esc(eigenPad(v.foto))}"` : ""}>` : ""}</span>
-            <span class="foto-kiezen-knoppen">
-              <label class="knop knop-licht knop-bestand"><span id="rit-bestand-tekst">${v.foto ? "Andere foto kiezen" : "Kies een foto"}</span><input class="sr" type="file" id="rit-bestand" accept="image/*"></label>
-              <button class="knop-klein knop-gevaar" type="button" id="rit-foto-weg"${v.foto ? "" : " hidden"}>Foto weghalen</button>
-            </span>
-          </div>
-          <p class="klein" id="rit-foto-info">${v.foto ? "" : "Van je telefoon of computer. De site maakt hem eerst kleiner (maximaal 1600 pixels breed)."}</p>
-        </div>
         <p class="fout" id="rit-fout" role="alert"></p>
         <div class="knoppen">
           <button class="knop" type="submit" id="rit-opslaan">${oud ? "Wijziging opslaan" : "Zet op mijn lijst"}</button>
           <button class="knop knop-licht" type="button" id="rit-sluit">Annuleren</button>
         </div>
-        <p class="klein">Wordt meteen opgeslagen in <code>data/gereden.json</code> op GitHub. Bezoekers zien het na een paar minuten.</p>
+        <p class="klein">${inSupabase(data) ? "Wordt meteen opgeslagen in je account." : "Wordt meteen opgeslagen in <code>data/gereden.json</code> op GitHub. Bezoekers zien het na een paar minuten."}</p>
       </form>`);
 
     const veld = (id) => $(`#${id}`, d);
@@ -1039,73 +1393,25 @@
       const cijfer = parseFloat(ruwCijfer.replace(",", "."));
       if (ruwCijfer && !(cijfer >= 1 && cijfer <= 10)) throw new Error("Een cijfer moet tussen 1 en 10 liggen.");
       zet("cijfer", ruwCijfer ? cijfer : "");
-      zet("notitie", veld("rit-notitie").value.trim());
-      if (fotoKeuze.weg) delete rit.foto;
+      const notitie = netteTekst(veld("rit-notitie").value);
+      if (notitie.length > 200) throw new Error("Een notitie mag hooguit 200 tekens hebben.");
+      zet("notitie", notitie);
       for (const k of Object.keys(rit)) if (rit[k] === undefined) delete rit[k];
       return rit;
     }
-
-    // Eigen foto: meteen verkleinen in de browser, uploaden pas bij Opslaan
-    const fotoKeuze = { blob: null, weg: false };
-    const voorbeeld = veld("rit-voorbeeld");
-    voorbeeld.addEventListener("error", (e) => { if (e.target.tagName === "IMG") fotoMislukt(e.target); }, true);
-    veld("rit-bestand").addEventListener("change", async (e) => {
-      const bestand = e.target.files && e.target.files[0];
-      if (!bestand) return;
-      const info = veld("rit-foto-info");
-      info.textContent = "Foto verkleinen…";
-      veld("rit-fout").textContent = "";
-      try {
-        const klein = await verkleinFoto(bestand, 1600);
-        fotoKeuze.blob = klein.blob;
-        fotoKeuze.weg = false;
-        voorbeeld.innerHTML = "";
-        voorbeeld.appendChild(Object.assign(new Image(), { src: URL.createObjectURL(klein.blob), alt: "Je foto" }));
-        info.textContent = `Klaar: ${klein.breedte} × ${klein.hoogte} pixels, ${getal(klein.blob.size / 1024)} kB. Wordt geüpload als je opslaat.`;
-        veld("rit-foto-weg").hidden = false;
-        veld("rit-bestand-tekst").textContent = "Andere foto kiezen";
-      } catch (fout) {
-        console.error(fout);
-        info.textContent = "";
-        veld("rit-fout").textContent = fout.message;
-      }
-      e.target.value = "";
-    });
-    veld("rit-foto-weg").addEventListener("click", () => {
-      fotoKeuze.blob = null;
-      fotoKeuze.weg = true;
-      voorbeeld.innerHTML = "";
-      veld("rit-foto-weg").hidden = true;
-      veld("rit-bestand-tekst").textContent = "Kies een foto";
-      veld("rit-foto-info").textContent = v.foto ? "De foto wordt van deze rit gehaald als je opslaat. Het bestand blijft in de map fotos staan." : "";
-    });
 
     veld("rit-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       let rit;
       try { rit = leesFormulier(); } catch (fout) { veld("rit-fout").textContent = fout.message; return; }
       const knop = veld("rit-opslaan");
-      const gelukt = await metKnop(knop, veld("rit-fout"), "Opslaan…", async () => {
-        if (fotoKeuze.blob) {
-          knop.textContent = "Foto uploaden…";
-          rit.foto = await uploadFoto(a, fotoKeuze.blob);
-          fotoKeuze.blob = null; // niet nog eens uploaden als het opslaan hierna mislukt
-          knop.textContent = "Opslaan…";
-        }
-        await bewaarRitten(data, (lijst) => {
-          if (!oud) return [...lijst, rit];
-          const eigen = ritVoorDitSpoor(data, lijst, oud, a);
-          if (eigen !== oud) rit.id = a.id;
-          const i = vindRit(lijst, eigen);
-          if (i < 0) throw new Error("Deze rit is intussen op een andere plek gewijzigd. Laad de pagina opnieuw en probeer het nog eens.");
-          lijst[i] = rit;
-          return lijst;
-        }, `${oud ? "Rit bewerkt" : "Rit toegevoegd"}: ${a.naam}`);
-      });
+      const bericht = `${oud ? "Rit bewerkt" : "Rit toegevoegd"}: ${a.naam}`;
+      const gelukt = await metKnop(knop, veld("rit-fout"), "Opslaan…", () =>
+        (oud ? ritBron.wijzig(data, a, oud, rit, bericht) : ritBron.voegToe(data, [rit], bericht)));
       if (!gelukt) return;
       d.close();
       klaar();
-      toast("Opgeslagen. Over een paar minuten staat het ook op de openbare site.", true);
+      toast(opgeslagenTekst(data), true);
     });
   }
 
@@ -1165,16 +1471,10 @@
 
   async function verwijderRit(a, data, rit, knop, klaar) {
     if (!confirm(`Deze rit op ${a.naam} verwijderen?\n${ritOmschrijving(rit)}`)) return;
-    const gelukt = await metKnop(knop, null, "Bezig…", () =>
-      bewaarRitten(data, (lijst) => {
-        const i = vindRit(lijst, ritVoorDitSpoor(data, lijst, rit, a));
-        if (i < 0) throw new Error("Deze rit staat niet meer in gereden.json. Laad de pagina opnieuw.");
-        lijst.splice(i, 1);
-        return lijst;
-      }, `Rit verwijderd: ${a.naam}`));
+    const gelukt = await metKnop(knop, null, "Bezig…", () => ritBron.verwijder(data, a, rit, `Rit verwijderd: ${a.naam}`));
     if (!gelukt) return;
     klaar();
-    toast("Verwijderd. Over een paar minuten is het ook van de openbare site af.", true);
+    toast(inSupabase(data) ? "Verwijderd." : "Verwijderd. Over een paar minuten is het ook van de openbare site af.", true);
   }
 
   /* ---------- Venster: achtbaan ontbreekt (alleen beheer) ----------
@@ -1210,7 +1510,7 @@
           </div>
           <button class="knop-klein" type="button" id="nieuw-hier">Gebruik mijn locatie</button>
         </fieldset>
-        <label class="vinkje"><input type="checkbox" id="nieuw-gereden" checked> Meteen op mijn lijst zetten (zonder datum)</label>
+        ${!sbAan || ik ? '<label class="vinkje"><input type="checkbox" id="nieuw-gereden" checked> Meteen op mijn lijst zetten (zonder datum)</label>' : ""}
         <div id="nieuw-dubbel"></div>
         <p class="fout" id="nieuw-fout" role="alert"></p>
         <div class="knoppen">
@@ -1287,13 +1587,14 @@
         geopend: jaar ? Number(jaar) : undefined,
         lat, lon,
       };
-      const ookRit = veld("nieuw-gereden").checked;
+      const ookRit = !!veld("nieuw-gereden")?.checked;
       const gelukt = await metKnop(veld("nieuw-opslaan"), fout, "Opslaan…", async () => {
         await wijzigJson("data/extra.json", "achtbanen", (lijst) => {
           if (lijst.some((x) => x && x.id === id)) return lijst;
           return [...lijst, nieuw];
         }, `Achtbaan toegevoegd aan extra.json: ${naam}`);
-        if (ookRit) await wijzigJson("data/gereden.json", "gereden", (ritten) => [...ritten, { id }], `Rit toegevoegd: ${naam}`);
+        if (ookRit && sbAan) await sbVraag(sb.from("ritten").insert(naarRij({ id })), "De achtbaan staat erin, maar je rit opslaan lukte niet");
+        else if (ookRit) await wijzigJson("data/gereden.json", "gereden", (ritten) => [...ritten, { id }], `Rit toegevoegd: ${naam}`);
       });
       if (!gelukt) return;
       d.close();
@@ -1334,7 +1635,20 @@
         <button class="knop knop-licht" type="button" data-terugzetten>Terugzetten</button></div></section>`;
     }
     const voorstel = !a.deelVan && data.voorstellen[a.id];
+    const foto = a.eigenFoto;
     return `<section class="blok"><h2>Beheer</h2><div class="mijn-rit beheer-blok">
+      <div class="foto-kiezen">
+        <span class="foto-kiezen-titel">Eigen foto</span>
+        <div class="foto-kiezen-rij">
+          <span class="foto-voorbeeld" id="beheer-voorbeeld">${foto ? `<img src="${esc(fotoBron(foto, 300))}" alt="Je foto"${eigenPad(foto) ? ` data-eigen="${esc(eigenPad(foto))}"` : ""}>` : ""}</span>
+          <span class="foto-kiezen-knoppen">
+            <label class="knop knop-licht knop-bestand"><span id="beheer-bestand-tekst">${foto ? "Andere foto kiezen" : "Kies een foto"}</span><input class="sr" type="file" id="beheer-bestand" accept="image/*"></label>
+            <button class="knop-klein knop-gevaar" type="button" id="beheer-foto-weg"${foto ? "" : " hidden"}>Foto weghalen</button>
+          </span>
+        </div>
+        <p class="klein" id="beheer-foto-info">Van je telefoon of computer. De site maakt hem kleiner (maximaal 1600 pixels breed) en haalt de gegevens uit de foto, zoals de plek. Je foto gaat op de hele site voor op die van Wikimedia Commons. Alleen jij kunt foto's toevoegen.</p>
+        <p class="fout" id="beheer-foto-fout" role="alert"></p>
+      </div>
       ${voorstel ? `<p>OpenStreetMap ziet hier ${voorstel.length} sporen met een eigen naam: ${voorstel.map(esc).join(", ")}.</p>` : ""}
       <div class="knoppen-rij">
         ${a.deelVan ? "" : `<button class="knop knop-licht" type="button" data-splits='${voorstel ? esc(JSON.stringify(voorstel)) : ""}'>Splitsen in losse sporen</button>`}
@@ -1389,9 +1703,28 @@
     });
   }
 
-  function openVerbergVenster(a, data) {
-    if (a.ritten && a.ritten.length) {
-      const d = maakVenster(`${a.naam} verbergen`, `<p>Deze baan staat op je lijst. Verwijder eerst je ${a.ritten.length === 1 ? "rit" : "ritten"}, dan kun je hem verbergen.</p>
+  // Alle codes waaronder iemand een rit op deze baan kan hebben: de baan zelf, de hele
+  // baan als dit een spoor is, en oude codes die naar deze baan verwijzen
+  function codesVoor(data, a) {
+    const doel = new Set([a.id, a.deelVan].filter(Boolean));
+    const codes = new Set(doel);
+    for (const [oud, nieuw] of Object.entries(data.aliassen)) if (doel.has(nieuw) && !data.echteIds.has(oud)) codes.add(oud);
+    return [...codes];
+  }
+
+  async function openVerbergVenster(a, data) {
+    let reden = a.ritten && a.ritten.length && (!sbAan || inSupabase(data))
+      ? `Deze baan staat op je lijst. Verwijder eerst je ${a.ritten.length === 1 ? "rit" : "ritten"}, dan kun je hem verbergen.` : "";
+    if (!reden && sbAan) {
+      try {
+        const ritten = await sbVraag(sb.from("ritten").select("achtbaan").in("achtbaan", codesVoor(data, a)), "Controleren");
+        if (ritten.some((r) => banenVanRit(data, r.achtbaan).includes(a))) {
+          reden = "Iemand heeft deze baan op de lijst staan. Een baan die iemand gereden heeft, kun je niet verbergen.";
+        }
+      } catch (e) { toast(e.message, true); return; }
+    }
+    if (reden) {
+      const d = maakVenster(`${a.naam} verbergen`, `<p>${esc(reden)}</p>
         <div class="knoppen"><button class="knop" type="button" id="verberg-sluit">Sluiten</button></div>`);
       $("#verberg-sluit", d).addEventListener("click", () => d.close());
       return;
@@ -1422,6 +1755,44 @@
       d.close();
       toast(`${a.naam} is verborgen.`, true);
       location.href = a.parkId || a.park ? `./?park=${encodeURIComponent(a.parkId || a.park)}#overzicht` : "./#overzicht";
+    });
+  }
+
+  // Eigen foto bij een achtbaan (beheer): verkleinen, uploaden naar fotos/ en vastleggen in data/fotos.json
+  function koppelFotoBeheer(a, data, opnieuw) {
+    const bestandVeld = $("#beheer-bestand");
+    if (!bestandVeld) return;
+    const info = $("#beheer-foto-info"), fout = $("#beheer-foto-fout");
+    $("#beheer-voorbeeld").addEventListener("error", (e) => { if (e.target.tagName === "IMG") fotoMislukt(e.target); }, true);
+    const legVast = (pad, bericht) => wijzigJson("data/fotos.json", "fotos",
+      (lijst) => [...lijst.filter((f) => f && f.id !== a.id), ...(pad ? [{ id: a.id, foto: pad }] : [])], bericht)
+      .then((nieuw) => zetFotos(data, nieuw.fotos || []));
+    bestandVeld.addEventListener("change", async (e) => {
+      const bestand = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!bestand) return;
+      fout.textContent = "";
+      try {
+        info.textContent = "Foto verkleinen…";
+        const klein = await verkleinFoto(bestand, 1600);
+        info.textContent = `Foto uploaden (${getal(klein.blob.size / 1024)} kB)…`;
+        const pad = await uploadFoto(a, klein.blob);
+        info.textContent = "Opslaan…";
+        await legVast(pad, `Foto bij ${a.naam}`);
+        opnieuw();
+        toast("Foto opgeslagen. Bezoekers zien hem over een paar minuten.", true);
+      } catch (f) {
+        console.error(f);
+        info.textContent = "";
+        fout.textContent = f.message;
+      }
+    });
+    $("#beheer-foto-weg").addEventListener("click", (e) => {
+      if (!confirm("Je eigen foto bij deze achtbaan weghalen? Het bestand blijft in de map fotos staan.")) return;
+      metKnop(e.currentTarget, fout, "Bezig…", async () => {
+        await legVast(null, `Foto weggehaald: ${a.naam}`);
+        opnieuw();
+      });
     });
   }
 
@@ -1456,6 +1827,12 @@
       return;
     }
     document.title = `${a.naam}${a.park ? ", " + a.park : ""} | ${SITE.naam}`;
+    // Ingelogd: jouw ritten. Anders die van de eigenaar, zoals altijd.
+    let persoon = null;
+    if (ik) {
+      try { persoon = await laadPersoon(data, ik); } catch (e) { console.warn(e); toast(e.message, true); }
+    }
+    zetPersoon(data, persoon || await laadEigenaar(data));
     if (data.details) {
       try { Object.assign(a, ((await haalJson(data.details, false)) || {})[a.id] || {}); } catch (e) { console.warn(e); }
     }
@@ -1464,7 +1841,7 @@
 
   function tekenAchtbaan(a, data) {
     const vak = $("#inhoud");
-    const eigenFoto = a.rit?.foto;
+    const eigenFoto = a.eigenFoto || a.rit?.foto;
     const fotoVeld = eigenFoto || a.foto;
     const src = fotoBron(fotoVeld, 1280);
     const eigen = eigenPad(fotoVeld);
@@ -1495,7 +1872,8 @@
         ${stempel}
       </header>
       ${specsHtml(a)}
-      ${ritHtml(a)}
+      ${ritHtml(a, data)}
+      <section class="blok ook-gereden" id="ook-gereden" hidden></section>
       <div class="twee">
         <section class="over" id="over" hidden><h2>Over deze achtbaan</h2><div id="wiki"></div></section>
         <section class="plaats"><h2>Waar staat hij?</h2><div class="minikaart" id="minikaart" role="region" aria-label="Kaart"></div></section>
@@ -1515,14 +1893,18 @@
     });
 
     tekenMiniKaart(a);
+    tekenOokGereden(a, data);
 
-    if (beheer) {
-      const opnieuw = () => tekenAchtbaan(a, data);
+    const opnieuw = () => tekenAchtbaan(a, data);
+    if (magRitten(data)) {
       vak.querySelectorAll("[data-rit-nieuw]").forEach((k) => k.addEventListener("click", () => openRitVenster(a, data, null, opnieuw)));
       vak.querySelectorAll("[data-rit-bewerk]").forEach((k) => k.addEventListener("click", () =>
         openRitVenster(a, data, a.ritten[Number(k.dataset.ritBewerk)], opnieuw)));
       vak.querySelectorAll("[data-rit-weg]").forEach((k) => k.addEventListener("click", () =>
         verwijderRit(a, data, a.ritten[Number(k.dataset.ritWeg)], k, opnieuw)));
+    }
+    if (beheer) {
+      koppelFotoBeheer(a, data, opnieuw);
       $("[data-splits]", vak)?.addEventListener("click", (e) => openSplitsVenster(a, data, e.currentTarget.dataset.splits ? JSON.parse(e.currentTarget.dataset.splits) : null));
       $("[data-verberg]", vak)?.addEventListener("click", () => openVerbergVenster(a, data));
       $("[data-terugzetten]", vak)?.addEventListener("click", (e) => metKnop(e.currentTarget, null, "Bezig…", async () => {
@@ -1591,7 +1973,9 @@
     function teken(melding) {
       const token = leesToken();
       vak.innerHTML = token
-        ? `<p class="beheer-aan"><strong>Beheer staat aan op dit apparaat.</strong> Je ziet nu de knoppen om ritten op te slaan, te bewerken en te verwijderen.</p>
+        ? `<p class="beheer-aan"><strong>Beheer staat aan op dit apparaat.</strong> ${sbAan
+              ? "Je ziet nu de knoppen om achtbanen toe te voegen, foto's te kiezen en banen te splitsen of te verbergen. Je ritten sla je op met je account."
+              : "Je ziet nu de knoppen om ritten op te slaan, te bewerken en te verwijderen."}</p>
            <p class="klein">Token: <code>${esc(token.slice(0, 15))}…${esc(token.slice(-4))}</code></p>
            <div id="token-uitslag" role="status">${melding || ""}</div>
            <div class="knoppen">
@@ -1656,6 +2040,18 @@
         $("#beheer-onbekend").innerHTML = `<p class="fout">${data.onbekend.length} ${meervoud(data.onbekend.length, "rit verwijst", "ritten verwijzen")} naar een achtbaan die niet meer in de lijst staat:
           ${data.onbekend.map((r) => `<code>${esc(r.id)}</code>`).join(", ")}. Ze tellen niet mee. Kijk of de code in <code>data/gereden.json</code> klopt.</p>`;
       }
+      // Met accounts: ook de ritten van iedereen in Supabase
+      if (sbAan) {
+        try {
+          const iedereen = await laadIedereen();
+          const naam = new Map(iedereen.profielen.map((p) => [p.id, p.weergavenaam]));
+          const los = iedereen.ritten.filter((r) => !banenVanRit(data, r.achtbaan).length);
+          if (los.length) {
+            $("#beheer-onbekend").insertAdjacentHTML("beforeend", `<p class="fout">${los.length} ${meervoud(los.length, "rit in de accounts verwijst", "ritten in de accounts verwijzen")} naar een achtbaan die niet in de lijst staat:
+              ${los.map((r) => `<code>${esc(r.achtbaan)}</code> (${esc(naam.get(r.gebruiker) || "?")})`).join(", ")}. Ze tellen niet mee. Staat de baan er weer in, dan tellen ze vanzelf weer.</p>`);
+          }
+        } catch (e) { console.warn(e); }
+      }
       // Wat je hebt verborgen of gesplitst, en wat OpenStreetMap voorstelt om te splitsen
       const banenNaam = (id) => data.perId.get(id)?.heleNaam || data.perId.get(id)?.naam || id;
       const verborgen = [...data.verborgen.values()];
@@ -1684,12 +2080,497 @@
     teken();
   }
 
+  /* ---------- Delen ----------
+     Op de telefoon het deelmenu van het toestel (WhatsApp, Berichten, …),
+     anders de link kopiëren. */
+  async function deel({ titel, tekst, url }) {
+    if (navigator.share && matchMedia("(pointer: coarse)").matches) {
+      try { await navigator.share({ title: titel, text: tekst, url }); return; } catch (e) {
+        if (e && e.name === "AbortError") return; // zelf geannuleerd
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast("Link gekopieerd. Plak hem in WhatsApp, een mail of waar je maar wilt.", true);
+    } catch (e) {
+      window.prompt("Kopieer deze link:", url);
+    }
+  }
+
+  // Knoppen onder de teller: delen, vergelijken, en bij je eigen profiel je account
+  function tekenProfielKnoppen(data, profiel) {
+    const vak = $("#profiel-knoppen");
+    if (!vak || !sbAan) return;
+    const eigen = !!(ik && profiel && ik.id === profiel.id);
+    const thuis = PAGINA === "home";
+    const url = thuis ? new URL("./", location.href).href : profielLink(profiel);
+    const n = data.gereden.length;
+    const vergelijk = !profiel ? "" : ik && !eigen
+      ? `vergelijk.html?a=${encodeURIComponent(ik.gebruikersnaam)}&b=${encodeURIComponent(profiel.gebruikersnaam)}`
+      : `vergelijk.html?a=${encodeURIComponent(profiel.gebruikersnaam)}`;
+    vak.innerHTML = `<button class="knop" type="button" id="deel-knop">${thuis ? "Deel de site" : eigen ? "Deel mijn profiel" : "Deel dit profiel"}</button>
+      ${vergelijk ? `<a class="knop knop-licht" href="${esc(vergelijk)}">${ik && !eigen ? "Vergelijk met mij" : "Vergelijken"}</a>` : ""}
+      ${eigen && !thuis ? '<a class="knop knop-licht" href="account.html">Mijn account</a>' : ""}`;
+    vak.hidden = false;
+    $("#deel-knop").addEventListener("click", () => deel({
+      titel: thuis ? SITE.naam : `${profiel.weergavenaam} | ${SITE.naam}`,
+      tekst: thuis
+        ? `${SITE.naam}: ${getal(n)} ${meervoud(n, "achtbaan", "achtbanen")} gereden.`
+        : `${profiel.weergavenaam} heeft ${getal(n)} ${meervoud(n, "achtbaan", "achtbanen")} gereden.`,
+      url,
+    }));
+  }
+
+  /* ---------- Profielpagina: profiel.html?wie=gebruikersnaam ---------- */
+
+  async function startProfiel() {
+    const wie = (params.get("wie") || "").trim().toLowerCase();
+    const melding = (titel, tekst) => {
+      $("main").innerHTML = `<div class="melding"><h1>${esc(titel)}</h1><p>${tekst}</p><p><a href="./">Naar de startpagina</a></p></div>`;
+    };
+    if (!sbAan) { melding("Profielen staan nog uit", "Deze site gebruikt nog geen accounts."); return; }
+    if (!wie) {
+      if (ik) { location.replace(`profiel.html?wie=${encodeURIComponent(ik.gebruikersnaam)}`); return; }
+      melding("Wiens profiel?", "In de link staat geen gebruikersnaam. Vraag je vriend om de link nog eens te sturen.");
+      return;
+    }
+    startBaan();
+    let data, profiel, persoon;
+    try {
+      [data, profiel] = await Promise.all([laadAlles(), GEBRUIKERSNAAM.test(wie) ? haalProfiel({ gebruikersnaam: wie }) : null]);
+      if (profiel) persoon = await laadPersoon(data, profiel);
+    } catch (e) {
+      $("#resultaten-tekst").textContent = "";
+      toonFout($("#raster"), e);
+      return;
+    }
+    if (!profiel) {
+      melding("Dit profiel bestaat niet", `Er is niemand met de gebruikersnaam <code>${esc(wie)}</code>. Misschien is de naam veranderd, of is het account verwijderd.`);
+      return;
+    }
+    zetPersoon(data, persoon);
+    const eigen = !!ik && ik.id === profiel.id;
+    document.title = `${profiel.weergavenaam} | ${SITE.naam}`;
+    $("#profiel-naam").textContent = profiel.weergavenaam;
+    $("#kaart-titel").textContent = eigen ? "Waar ik heb gereden" : `Waar ${profiel.weergavenaam} heeft gereden`;
+    $("#kaart").setAttribute("aria-label", `Kaart met parken waar ${eigen ? "ik heb" : `${profiel.weergavenaam} heeft`} gereden`);
+    const vulBoven = () => {
+      vulHero(data); vulFeiten(data.gereden); tekenKaart(data.gereden); tekenProfielKnoppen(data, profiel);
+    };
+    vulBoven();
+    startOverzicht(data, vulBoven);
+    if (data.bijgewerkt) $("#bijgewerkt").textContent = `, bijgewerkt op ${datum(data.bijgewerkt)}`;
+  }
+
+  /* ---------- Ranglijst op de startpagina ---------- */
+
+  async function tekenRanglijst(data) {
+    const sectie = $("#ranglijst");
+    if (!sectie || !sbAan) return;
+    let iedereen;
+    try { iedereen = await laadIedereen(); } catch (e) {
+      sectie.hidden = false;
+      $("#ranglijst-vak").innerHTML = `<p class="fout">${esc(e.message)}</p>`;
+      return;
+    }
+    const rijen = [...banenPerPersoon(data, iedereen).values()]
+      .filter((x) => x.profiel.in_ranglijst)
+      .map((x) => { const b = [...x.banen]; return { p: x.profiel, n: b.length, landen: telLanden(b), parken: telParken(b) }; })
+      .sort((x, y) => y.n - x.n || y.landen - x.landen || y.parken - x.parken || opWeergavenaam(x.p, y.p));
+    if (!rijen.length) return;
+    let plaats = 0;
+    const regels = rijen.map((x, i) => {
+      if (!i || x.n !== rijen[i - 1].n) plaats = i + 1; // gelijk aantal: gedeelde plaats
+      return `<tr${ik && ik.id === x.p.id ? ' class="is-ik"' : ""}>
+        <td class="plaats">${plaats}</td>
+        <td class="naam"><a href="${esc(profielLink(x.p))}">${esc(x.p.weergavenaam)}</a></td>
+        <td class="getal credits">${getal(x.n)}</td>
+        <td class="getal">${getal(x.landen)}</td>
+        <td class="getal">${getal(x.parken)}</td></tr>`;
+    }).join("");
+    $("#ranglijst-tekst").textContent = `${rijen.length} ${meervoud(rijen.length, "persoon", "personen")}`;
+    $("#ranglijst-vak").innerHTML = `
+      <table class="ranglijst">
+        <caption class="sr">Ranglijst op aantal credits</caption>
+        <thead><tr><th scope="col"><span class="sr">Plaats</span></th><th scope="col">Naam</th><th scope="col" class="getal">Credits</th><th scope="col" class="getal">Landen</th><th scope="col" class="getal">Parken</th></tr></thead>
+        <tbody>${regels}</tbody>
+      </table>
+      <p class="ranglijst-voet"><a href="vergelijk.html">Vergelijk twee vrienden</a>${ik && !ik.in_ranglijst
+        ? ' <span class="klein">Jij staat er niet tussen. Dat kun je aanzetten bij <a href="account.html">Mijn account</a>.</span>' : ""}</p>`;
+    sectie.hidden = false;
+  }
+
+  /* ---------- Attractiepagina: ook gereden door ---------- */
+
+  async function tekenOokGereden(a, data) {
+    const vak = $("#ook-gereden");
+    if (!vak || !sbAan) return;
+    let rijen, iedereen;
+    try {
+      [rijen, iedereen] = await Promise.all([
+        sbVraag(metTijd(sb.from("ritten").select("id,gebruiker,achtbaan,datum,cijfer,notitie").in("achtbaan", codesVoor(data, a)).order("id")), "Ritten ophalen"),
+        laadIedereen(),
+      ]);
+    } catch (e) { console.warn(e); return; }
+    const profielen = new Map(iedereen.profielen.map((p) => [p.id, p]));
+    const per = new Map();
+    const voegToe = (p, rit) => { if (!per.has(p.id)) per.set(p.id, { p, ritten: [] }); per.get(p.id).ritten.push(rit); };
+    for (const r of rijen) {
+      const p = profielen.get(r.gebruiker);
+      if (p && banenVanRit(data, r.achtbaan).includes(a)) voegToe(p, naarRit(r));
+    }
+    // De eigenaar die zijn credits nog niet heeft overgezet
+    const eigenaar = iedereen.profielen.find((p) => p.gebruikersnaam === SITE.eigenaar);
+    if (eigenaar && !iedereen.ritten.some((r) => r.gebruiker === eigenaar.id)) {
+      for (const r of data.jsonRitten) if (banenVanRit(data, r.id).includes(a)) voegToe(eigenaar, r);
+    }
+    const zelf = data.persoon && data.persoon.profiel ? data.persoon.profiel.id : null;
+    const lijst = [...per.values()].filter((x) => x.p.id !== zelf && x.p.in_ranglijst).map(({ p, ritten }) => {
+      ritten.sort((x, y) => String(x.datum || "9999").localeCompare(String(y.datum || "9999")));
+      const laatste = (veld) => ritten.map((r) => r[veld]).filter((w) => w != null && w !== "").pop();
+      return { p, keer: ritten.length, eerste: ritten.every((r) => r.datum) ? ritten[0].datum : null, cijfer: laatste("cijfer"), notitie: laatste("notitie") };
+    }).sort((x, y) => String(x.eerste || "9999").localeCompare(String(y.eerste || "9999")) || opWeergavenaam(x.p, y.p));
+    if (!lijst.length) { vak.hidden = true; return; }
+    vak.innerHTML = `<h2>${a.rit ? "Ook gereden door" : "Gereden door"}</h2>
+      <ul class="ook-lijst">${lijst.map((x) => {
+        const info = [x.eerste ? datum(x.eerste, true) : "", x.keer > 1 ? `${x.keer} keer` : "", x.cijfer ? `${getal(x.cijfer, 1)}/10` : ""].filter(Boolean).join(" · ");
+        return `<li><a href="${esc(profielLink(x.p))}">${esc(x.p.weergavenaam)}</a>${info ? ` <span class="ook-info">${esc(info)}</span>` : ""}${x.notitie ? `<span class="ook-notitie">${esc(x.notitie)}</span>` : ""}</li>`;
+      }).join("")}</ul>`;
+    vak.hidden = false;
+  }
+
+  /* ---------- Vergelijken: vergelijk.html?a=…&b=… ---------- */
+
+  async function startVergelijk() {
+    const uit = $("#vergelijk-uitslag");
+    if (!sbAan) { uit.innerHTML = '<div class="melding"><h1>Vergelijken staat nog uit</h1><p>Deze site gebruikt nog geen accounts.</p></div>'; return; }
+    let data, iedereen;
+    try { [data, iedereen] = await Promise.all([laadAlles(), laadIedereen()]); } catch (e) { toonFout(uit, e); return; }
+    const per = banenPerPersoon(data, iedereen);
+    const opNaam = new Map(iedereen.profielen.map((p) => [p.gebruikersnaam, p]));
+    const eigenaar = opNaam.get(SITE.eigenaar);
+    let a = opNaam.get((params.get("a") || "").toLowerCase()) || ik || eigenaar || iedereen.profielen[0];
+    let b = opNaam.get((params.get("b") || "").toLowerCase());
+    const keuzes = iedereen.profielen.filter((p) => p.in_ranglijst || p === a || p === b || (ik && ik.id === p.id)).sort(opWeergavenaam);
+    if (!b || b === a) b = (a !== eigenaar && eigenaar) || keuzes.find((p) => p !== a);
+    if (!a || !b) {
+      $("#vergelijk-kies").hidden = true;
+      uit.innerHTML = '<div class="melding"><h1>Nog niemand om mee te vergelijken</h1><p>Er is pas één profiel. Nodig een vriend uit!</p></div>';
+      return;
+    }
+    const kies = [$("#kies-a"), $("#kies-b")];
+    for (const k of kies) for (const p of keuzes) k.add(new Option(ik && ik.id === p.id ? `${p.weergavenaam} (ik)` : p.weergavenaam, p.gebruikersnaam));
+    kies[0].value = a.gebruikersnaam;
+    kies[1].value = b.gebruikersnaam;
+    kies.forEach((k) => k.addEventListener("change", () => {
+      a = opNaam.get(kies[0].value); b = opNaam.get(kies[1].value);
+      history.replaceState(null, "", `vergelijk.html?a=${encodeURIComponent(a.gebruikersnaam)}&b=${encodeURIComponent(b.gebruikersnaam)}`);
+      teken();
+    }));
+    const opNaamBaan = (x, y) => x.naam.localeCompare(y.naam, TAAL) || String(x.park || "").localeCompare(String(y.park || ""), TAAL);
+    const lijstHtml = (banen) => (banen.length
+      ? `<ul class="park-lijst vergelijk-lijst">${banen.map((x) => `<li><a href="${pagina(x)}">${esc(x.naam)}</a>${x.park ? `<span class="dicht">${esc(x.park)}</span>` : ""}</li>`).join("")}</ul>`
+      : '<p class="klein">Geen.</p>');
+    function teken() {
+      document.title = `${a.weergavenaam} tegen ${b.weergavenaam} | ${SITE.naam}`;
+      const A = per.get(a.id).banen, B = per.get(b.id).banen;
+      const beide = [...A].filter((x) => B.has(x)).sort(opNaamBaan);
+      const alleenA = [...A].filter((x) => !B.has(x)).sort(opNaamBaan);
+      const alleenB = [...B].filter((x) => !A.has(x)).sort(opNaamBaan);
+      const kant = (p, n) => `<a class="score-kant" href="${esc(profielLink(p))}"><span class="score-getal">${getal(n)}</span><span class="score-naam">${esc(p.weergavenaam)}</span></a>`;
+      const blok = (titel, banen) => `<section class="blok"><h2>${esc(titel)} <span class="aantal">${getal(banen.length)}</span></h2>${lijstHtml(banen)}</section>`;
+      uit.innerHTML = a === b
+        ? '<p class="binnen">Kies twee verschillende personen.</p>'
+        : `<section class="score" aria-label="Aantal credits">${kant(a, A.size)}<span class="score-midden">tegen</span>${kant(b, B.size)}</section>
+          ${blok("Allebei gereden", beide)}
+          ${blok(`Alleen ${a.weergavenaam}`, alleenA)}
+          ${blok(`Alleen ${b.weergavenaam}`, alleenB)}`;
+    }
+    teken();
+  }
+
+  /* ---------- Accountpagina: inloggen, profiel, uitloggen ---------- */
+
+  const sessieOpslag = {
+    lees(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+    zet(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* geen opslag */ } },
+    wis(k) { try { sessionStorage.removeItem(k); } catch (e) { /* geen opslag */ } },
+  };
+  const LOGIN_ADRES = "achtbanen-login-adres"; // alleen in dit tabblad, voor de code uit de mail
+  const MELDING = "achtbanen-melding"; // een bericht voor de volgende pagina
+  const profielLink = (p) => new URL(`profiel.html?wie=${encodeURIComponent(p.gebruikersnaam)}`, location.href).href;
+  const naarGebruikersnaam = (s) => slug(s).slice(0, 24).replace(/-+$/, "");
+
+  function startAccountPagina() {
+    const vak = $("#account-vak");
+    if (!sbAan) {
+      vak.innerHTML = `<p><strong>Accounts staan nog niet aan op deze site.</strong></p>
+        <p class="klein">Ben jij de eigenaar? Vul <code>supabaseUrl</code> en <code>supabaseSleutel</code> in bij <code>config.js</code>. Hoe dat gaat, staat in de README.</p>`;
+      return;
+    }
+    const melding = sessieOpslag.lees(LOGIN_MELDING) || "";
+    sessieOpslag.wis(LOGIN_MELDING);
+    if (accountFout) {
+      vak.innerHTML = `<p class="fout">${esc(accountFout)}</p>
+        <div class="knoppen"><button class="knop" type="button" id="opnieuw">Opnieuw proberen</button></div>`;
+      $("#opnieuw").addEventListener("click", () => location.reload());
+      return;
+    }
+    if (!sessie) { tekenInloggen(vak, melding); return; }
+    if (!ik) { tekenNieuwProfiel(vak); return; }
+    tekenAccount(vak);
+  }
+
+  function tekenInloggen(vak, melding) {
+    const adres = sessieOpslag.lees(LOGIN_ADRES) || "";
+    vak.innerHTML = `
+      ${melding ? `<p class="fout">${esc(melding)}</p>` : ""}
+      <div id="login-stap1"${adres ? " hidden" : ""}>
+        <p><strong>Inloggen gaat zonder wachtwoord.</strong> Vul je e-mailadres in. Je krijgt een mail met een link: tik erop en je bent ingelogd op het apparaat waar je hem opent.</p>
+        <form class="formulier" id="login-form" novalidate>
+          <label>Je e-mailadres <input type="email" id="login-email" autocomplete="email" inputmode="email" maxlength="254" required value="${esc(adres)}"></label>
+          <p class="fout" id="login-fout" role="alert"></p>
+          <div class="knoppen"><button class="knop" type="submit" id="login-knop">Stuur me een inloglink</button></div>
+        </form>
+        <p class="klein">Alleen wie een uitnodiging heeft gekregen, kan inloggen. Je e-mailadres wordt alleen gebruikt om in te loggen en staat nergens op de site.</p>
+      </div>
+      <div id="login-stap2"${adres ? "" : " hidden"}>
+        <p class="goed">Kijk in je mail. Tik op de link in de mail om in te loggen.</p>
+        <p class="klein">Geen mail binnen een paar minuten? Kijk bij je spam en controleer of je het adres goed hebt getypt. Heb je nog geen uitnodiging, vraag er dan om.</p>
+        <form class="formulier" id="code-form" novalidate>
+          <label>Staat er een code van 6 cijfers in de mail? Dan kan het ook zo: <input type="text" id="login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456"></label>
+          <p class="fout" id="code-fout" role="alert"></p>
+          <div class="knoppen">
+            <button class="knop" type="submit" id="code-knop">Inloggen met de code</button>
+            <button class="knop knop-licht" type="button" id="login-anders">Ander e-mailadres</button>
+          </div>
+        </form>
+      </div>`;
+
+    $("#login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = $("#login-email").value.trim();
+      const fout = $("#login-fout");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) { fout.textContent = "Vul je e-mailadres in, bijvoorbeeld naam@voorbeeld.nl."; return; }
+      const gelukt = await metKnop($("#login-knop"), fout, "Versturen…", async () => {
+        const { error } = await sb.auth.signInWithOtp({
+          email,
+          options: { shouldCreateUser: false, emailRedirectTo: new URL("account.html", location.href).href },
+        });
+        // Een adres zonder uitnodiging krijgt hetzelfde bericht als een bekend adres,
+        // zodat niemand kan uitproberen wie er een account heeft.
+        if (error && !/otp_disabled|signup_disabled|user_not_found/.test(String(error.code || "")) && !/signups not allowed/i.test(error.message || "")) {
+          throw sbFout(error, "Versturen lukte niet");
+        }
+      });
+      if (!gelukt) return;
+      sessieOpslag.zet(LOGIN_ADRES, email);
+      $("#login-stap1").hidden = true;
+      $("#login-stap2").hidden = false;
+      $("#login-code").focus();
+    });
+
+    $("#code-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const code = $("#login-code").value.replace(/\s/g, "");
+      const fout = $("#code-fout");
+      if (!/^\d{6}$/.test(code)) { fout.textContent = "De code bestaat uit 6 cijfers."; return; }
+      const gelukt = await metKnop($("#code-knop"), fout, "Controleren…", async () => {
+        const { error } = await sb.auth.verifyOtp({ email: sessieOpslag.lees(LOGIN_ADRES) || "", token: code, type: "email" });
+        if (error) throw /expired|invalid/i.test(`${error.code} ${error.message}`) ? new Error("Deze code klopt niet of is verlopen. Vraag een nieuwe aan.") : sbFout(error);
+      });
+      if (!gelukt) return;
+      sessieOpslag.wis(LOGIN_ADRES);
+      location.replace("account.html");
+    });
+
+    $("#login-anders").addEventListener("click", () => {
+      sessieOpslag.wis(LOGIN_ADRES);
+      $("#login-stap2").hidden = true;
+      $("#login-stap1").hidden = false;
+      $("#login-email").focus();
+    });
+  }
+
+  function profielVeldenHtml(p, nieuw) {
+    return `
+      <label>Je naam op de site <input type="text" id="p-naam" maxlength="40" required autocomplete="nickname" placeholder="Bijvoorbeeld Anna" value="${esc(p.weergavenaam || "")}"></label>
+      <label>Gebruikersnaam voor je link <input type="text" id="p-gebruiker" maxlength="24" required autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="anna" value="${esc(p.gebruikersnaam || "")}"></label>
+      <p class="klein link-voorbeeld">3 tot 24 tekens: kleine letters, cijfers en streepjes. Je link wordt <code id="p-link"></code></p>
+      <label class="vinkje"><input type="checkbox" id="p-ranglijst"${p.in_ranglijst === false ? "" : " checked"}> Laat mij zien in de ranglijst en bij "Ook gereden door"</label>
+      <p class="klein">Zet je dit uit, dan sta je daar niet tussen. Je profiel is dan alleen te vinden met je eigen link.</p>
+      <p class="fout" id="p-fout" role="alert"></p>
+      <div class="knoppen"><button class="knop" type="submit" id="p-opslaan">${nieuw ? "Profiel maken" : "Wijzigingen opslaan"}</button></div>`;
+  }
+
+  // Leest en controleert het profielformulier; zelfde regels als in de database
+  function koppelProfielFormulier(form, nieuw, opslaan) {
+    const naam = $("#p-naam", form), gebruiker = $("#p-gebruiker", form), link = $("#p-link", form);
+    let zelfGekozen = !nieuw;
+    const toonLink = () => { link.textContent = profielLink({ gebruikersnaam: gebruiker.value.trim().toLowerCase() || "…" }); };
+    naam.addEventListener("input", () => { if (!zelfGekozen) { gebruiker.value = naarGebruikersnaam(naam.value); toonLink(); } });
+    gebruiker.addEventListener("input", () => { zelfGekozen = true; toonLink(); });
+    toonLink();
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fout = $("#p-fout", form);
+      const p = {
+        weergavenaam: netteTekst(naam.value),
+        gebruikersnaam: gebruiker.value.trim().toLowerCase(),
+        in_ranglijst: $("#p-ranglijst", form).checked,
+      };
+      if (!p.weergavenaam) { fout.textContent = "Vul je naam in."; return; }
+      if (p.weergavenaam.length > 40) { fout.textContent = "Je naam mag hooguit 40 tekens hebben."; return; }
+      if (!GEBRUIKERSNAAM.test(p.gebruikersnaam) || p.gebruikersnaam.includes("--")) {
+        fout.textContent = "Een gebruikersnaam heeft 3 tot 24 tekens: kleine letters, cijfers en streepjes (niet aan het begin of eind).";
+        return;
+      }
+      if (ik && ik.gebruikersnaam === SITE.eigenaar && p.gebruikersnaam !== ik.gebruikersnaam &&
+        !confirm(`Jij bent de eigenaar van de site (eigenaar: "${SITE.eigenaar}" in config.js). Verander je je gebruikersnaam, pas dan ook config.js aan. Anders toont de startpagina je credits niet meer. Doorgaan?`)) return;
+      naam.value = p.weergavenaam;
+      await metKnop($("#p-opslaan", form), fout, "Opslaan…", () => opslaan(p));
+    });
+  }
+
+  function tekenNieuwProfiel(vak) {
+    vak.innerHTML = `<h2>Welkom!</h2>
+      <p>${welkeLink === "invite" ? "Je uitnodiging is gelukt. " : ""}Kies nog hoe je heet. Daarna kun je je credits afvinken.</p>
+      <form class="formulier" id="profiel-form" novalidate>${profielVeldenHtml({}, true)}</form>
+      <p class="klein"><a href="#" id="uitloggen">Uitloggen</a></p>`;
+    koppelProfielFormulier($("#profiel-form"), true, async (p) => {
+      ik = await sbVraag(sb.from("profielen").insert({ id: sessie.user.id, ...p }).select(PROFIEL_VELDEN).single(), "Profiel maken");
+      tekenAccount(vak);
+      toast("Je profiel staat klaar.", true);
+    });
+    $("#uitloggen").addEventListener("click", (e) => { e.preventDefault(); logUit("local"); });
+  }
+
+  function tekenAccount(vak) {
+    const menu = $(".kop nav .nav-ik");
+    if (menu) { menu.textContent = ik.weergavenaam; menu.title = "Mijn credits"; menu.href = profielLink(ik); }
+    vak.innerHTML = `
+      <p class="beheer-aan"><strong>Je bent ingelogd als ${esc(ik.weergavenaam)}.</strong></p>
+      <div class="knoppen">
+        <a class="knop" href="${esc(profielLink(ik))}">Naar mijn credits</a>
+        <button class="knop knop-licht" type="button" id="uitloggen">Uitloggen</button>
+      </div>
+      <h2 class="beheer-kop">Profiel</h2>
+      <form class="formulier" id="profiel-form" novalidate>${profielVeldenHtml(ik, false)}</form>
+      <div id="account-extra"></div>
+      <h2 class="beheer-kop">Uitloggen op al je apparaten</h2>
+      <p class="klein">Telefoon kwijt, of ingelogd op een computer van iemand anders? Hiermee log je overal uit. Je gegevens blijven bewaard.</p>
+      <div class="knoppen"><button class="knop knop-licht" type="button" id="overal-uit">Overal uitloggen</button></div>
+      <h2 class="beheer-kop">Account verwijderen</h2>
+      <p>Hiermee verdwijnen meteen je account, je e-mailadres, je profiel en al je ritten. Dat kan niet ongedaan worden. <a href="privacy.html">Wat er bewaard wordt</a></p>
+      ${ik.gebruikersnaam === SITE.eigenaar ? '<p class="fout">Jij bent de eigenaar. Verwijder je je account, dan toont de startpagina weer de reservekopie uit gereden.json.</p>' : ""}
+      <form class="formulier" id="weg-form" novalidate>
+        <label><span>Typ je gebruikersnaam (<strong>${esc(ik.gebruikersnaam)}</strong>) om te bevestigen</span> <input type="text" id="weg-naam" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="24"></label>
+        <p class="fout" id="weg-fout" role="alert"></p>
+        <div class="knoppen"><button class="knop knop-licht knop-gevaar" type="submit" id="weg-knop">Mijn account verwijderen</button></div>
+      </form>`;
+    koppelProfielFormulier($("#profiel-form"), false, async (p) => {
+      ik = await sbVraag(sb.from("profielen").update(p).eq("id", ik.id).select(PROFIEL_VELDEN).single(), "Opslaan");
+      tekenAccount(vak);
+      toast("Opgeslagen.");
+    });
+    tekenOverzetten();
+    $("#uitloggen").addEventListener("click", () => logUit("local"));
+    $("#overal-uit").addEventListener("click", () => {
+      if (confirm("Op al je apparaten uitloggen? Daarna log je overal opnieuw in met een link per mail.")) logUit("global");
+    });
+    $("#weg-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fout = $("#weg-fout");
+      if ($("#weg-naam").value.trim().toLowerCase() !== ik.gebruikersnaam) { fout.textContent = "Typ precies je gebruikersnaam om te bevestigen."; return; }
+      if (!confirm("Weet je het zeker? Je account en al je ritten worden nu verwijderd.")) return;
+      const gelukt = await metKnop($("#weg-knop"), fout, "Verwijderen…", () => sbVraag(sb.rpc("verwijder_mijn_account"), "Verwijderen lukte niet"));
+      if (!gelukt) return;
+      sessieOpslag.zet(MELDING, "Je account en al je gegevens zijn verwijderd.");
+      await logUit("local");
+    });
+  }
+
+  // Eenmalig: de credits van de eigenaar uit data/gereden.json naar zijn account.
+  // gereden.json blijft daarna staan als reservekopie.
+  async function tekenOverzetten() {
+    const vak = $("#account-extra");
+    if (!vak || !ik || ik.gebruikersnaam !== SITE.eigenaar) return;
+    let data, mijn;
+    try { [data, mijn] = await Promise.all([laadAlles(), haalRitten(ik.id)]); } catch (e) {
+      vak.innerHTML = `<p class="fout">${esc(e.message)}</p>`;
+      return;
+    }
+    if (mijn.length) {
+      vak.innerHTML = `<p class="klein">Je ${getal(mijn.length)} ritten staan in je account. <code>data/gereden.json</code> blijft als reservekopie in de repository staan.</p>`;
+      return;
+    }
+    const json = data.jsonRitten;
+    if (!json.length) return;
+    const goed = json.filter((r) => ACHTBAAN_ID.test(r.id) && geldigeDatum(r.datum));
+    const mis = json.filter((r) => !goed.includes(r));
+    vak.innerHTML = `<h2 class="beheer-kop">Je credits overzetten</h2>
+      <p>In <code>data/gereden.json</code> staan ${getal(json.length)} ritten. Zet ze één keer over naar je account. Daarna vink je af zoals je vrienden dat doen. <code>gereden.json</code> blijft staan als reservekopie.</p>
+      ${mis.length ? `<p class="fout">${mis.length} ${meervoud(mis.length, "rit heeft", "ritten hebben")} een code of datum die niet klopt en ${meervoud(mis.length, "wordt", "worden")} overgeslagen: ${mis.map((r) => `<code>${esc(r.id)}${r.datum ? ` (${esc(r.datum)})` : ""}</code>`).join(", ")}</p>` : ""}
+      <p class="fout" id="overzetten-fout" role="alert"></p>
+      <div class="knoppen"><button class="knop" type="button" id="overzetten">Zet ${getal(goed.length)} ${meervoud(goed.length, "credit", "credits")} over</button></div>`;
+    $("#overzetten").addEventListener("click", (e) => metKnop(e.currentTarget, $("#overzetten-fout"), "Overzetten…", async () => {
+      if ((await haalRitten(ik.id)).length) throw new Error("Er staan intussen al ritten in je account. Laad de pagina opnieuw.");
+      const rijen = goed.map(naarRij);
+      for (let i = 0; i < rijen.length; i += 500) {
+        await sbVraag(sb.from("ritten").insert(rijen.slice(i, i + 500)), "Overzetten lukte niet");
+      }
+      const nu = await haalRitten(ik.id);
+      vak.innerHTML = `<h2 class="beheer-kop">Je credits overzetten</h2>
+        <p class="goed">✓ ${getal(nu.length)} ritten staan nu in je account.</p>
+        <div class="knoppen"><a class="knop" href="./">Naar de startpagina</a></div>`;
+      toast("Je credits zijn overgezet.", true);
+    }));
+  }
+
+  async function logUit(waar) {
+    try { await sb.auth.signOut({ scope: waar }); } catch (e) { console.warn(e); }
+    // Lukt het afmelden bij Supabase niet (geen internet), dan in elk geval op dit apparaat.
+    // Ook je afvinkkeuze en het mailadres van het inloggen gaan weg.
+    try {
+      for (const k of Object.keys(localStorage)) if (k === "achtbanen-sessie" || k.startsWith("achtbanen-sessie-") || k.startsWith("achtbanen-afvink-")) localStorage.removeItem(k);
+    } catch (e) { /* geen opslag */ }
+    sessieOpslag.wis(LOGIN_ADRES);
+    location.replace("./");
+  }
+
+  /* ---------- Menu en voet ---------- */
+
+  function tekenMenu() {
+    const nav = $(".kop nav");
+    if (nav && sbAan) {
+      nav.insertAdjacentHTML("beforeend", `<a href="${PAGINA === "home" ? "" : "./"}#ranglijst">Vrienden</a>`);
+      nav.insertAdjacentHTML("beforeend", ik
+        ? `<a href="${esc(profielLink(ik))}" class="nav-ik" title="Mijn credits">${esc(ik.weergavenaam)}</a>`
+        : '<a href="account.html" class="nav-ik">Inloggen</a>');
+    }
+    if (nav && beheer && PAGINA !== "beheer") nav.insertAdjacentHTML("beforeend", '<a href="beheer.html" class="nav-beheer">Beheer</a>');
+    const voet = $(".voet");
+    if (voet && sbAan) {
+      voet.insertAdjacentHTML("beforeend", `<p class="voet-links">${PAGINA === "account" ? "" : `<a href="account.html">${ik ? "Mijn account" : "Inloggen"}</a>`}
+        ${PAGINA === "privacy" ? "" : '<a href="privacy.html">Privacy</a>'}</p>`);
+    }
+  }
+
   /* ---------- Starten ---------- */
   document.querySelectorAll("[data-sitenaam]").forEach((el) => { el.textContent = SITE.naam; });
-  if (beheer && PAGINA !== "beheer") {
-    $(".kop nav")?.insertAdjacentHTML("beforeend", '<a href="beheer.html" class="nav-beheer">Beheer</a>');
-  }
-  if (PAGINA === "home") { document.title = SITE.naam; startPagina(); }
-  if (PAGINA === "achtbaan") startAchtbaan();
-  if (PAGINA === "beheer") startBeheer();
+  if (["home", "achtbaan", "profiel", "vergelijk"].includes(PAGINA)) laadAlles().catch(() => { /* de pagina toont de fout */ });
+  (async () => {
+    if (!(await startAccount())) return;
+    if (sessie) sessieOpslag.wis(LOGIN_ADRES);
+    const melding = sessieOpslag.lees(MELDING);
+    if (melding) { sessieOpslag.wis(MELDING); setTimeout(() => toast(melding, true), 300); }
+    if (sbAan && ["home", "achtbaan", "profiel", "vergelijk"].includes(PAGINA)) laadIedereen().catch(() => { /* de pagina toont de fout */ });
+    tekenMenu();
+    if (PAGINA === "home") { document.title = SITE.naam; startPagina(); }
+    if (PAGINA === "achtbaan") startAchtbaan();
+    if (PAGINA === "beheer") startBeheer();
+    if (PAGINA === "account") startAccountPagina();
+    if (PAGINA === "profiel") startProfiel();
+    if (PAGINA === "vergelijk") startVergelijk();
+  })();
 })();
