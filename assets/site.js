@@ -330,6 +330,17 @@
       const { data } = await sb.auth.getSession();
       sessie = data.session || null;
       if (sessie) ik = await haalProfiel({ id: sessie.user.id });
+      // Sessie zonder profiel: bestaat het account nog? (Misschien verwijderd in Supabase.)
+      if (sessie && !ik) {
+        const { error } = await sb.auth.getUser();
+        if (error && (error.status === 401 || error.status === 403 || /not.exist|user_not_found|bad_jwt/i.test(`${error.code} ${error.message}`))) {
+          await sb.auth.signOut({ scope: "local" }).catch(() => {});
+          try { localStorage.removeItem("achtbanen-sessie"); } catch (e) { /* geen opslag */ }
+          sessie = null;
+          try { sessionStorage.setItem(LOGIN_MELDING, "Je account bestaat niet meer. Ben je opnieuw uitgenodigd? Log dan hieronder in."); } catch (e) { /* geen opslag */ }
+          if (PAGINA !== "account") { location.replace("account.html"); return false; }
+        }
+      }
     } catch (e) {
       console.warn(e);
       accountFout = e.message;
