@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.supabase.co https://api.github.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <title>Vergelijken | Rubens Achtbanen</title>
+  <meta name="description" content="Vergelijk de credits van twee vrienden: wat jullie allebei gereden hebben, en wat alleen de een of de ander.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Rubens Achtbanen">
+  <meta property="og:locale" content="nl_NL">
+  <meta property="og:title" content="Wie heeft meer achtbanen gereden?">
+  <meta property="og:description" content="Vergelijk de credits van twee vrienden: wat jullie allebei gereden hebben, en wat alleen de een of de ander.">
+  <meta property="og:image" content="https://rudemer.github.io/achtbanen/assets/delen.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Een rode achtbaan met een treintje, en de woorden Rubens Achtbanen">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎢</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Instrument+Sans:ital,wght@0,400;0,600;0,700;1,400&display=swap">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-pagina="vergelijk">
+  <header class="kop">
+    <a class="logo" href="./" data-sitenaam>Rubens Achtbanen</a>
+    <nav aria-label="Hoofdmenu">
+      <a href="./#kaart-sectie">Kaart</a>
+      <a href="./#overzicht">Alle achtbanen</a>
+    </nav>
+  </header>
+
+  <main id="inhoud">
+    <header class="titel">
+      <div>
+        <h1>Vergelijken</h1>
+        <p class="plek">Wie heeft wat gereden?</p>
+      </div>
+    </header>
+
+    <section class="blok">
+      <form class="vergelijk-kies" id="vergelijk-kies">
+        <label>Wie <select id="kies-a"></select></label>
+        <span class="vergelijk-tegen" aria-hidden="true">tegen</span>
+        <label>Met wie <select id="kies-b"></select></label>
+      </form>
+    </section>
+
+    <div id="vergelijk-uitslag"><p class="binnen">Laden…</p></div>
+  </main>
+
+  <footer class="voet">
+    <p>Gegevens: <a href="https://www.wikidata.org">Wikidata</a> (CC0) en <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap-bijdragers (ODbL)</a>.</p>
+  </footer>
+
+  <script src="assets/vendor/supabase.js" defer></script>
+  <script src="config.js" defer></script>
+  <script src="assets/site.js" defer></script>
+</body>
+</html>

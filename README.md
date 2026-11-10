@@ -15,7 +15,10 @@ Alle achtbanen van de wereld op één site, met een teller van de achtbanen die 
 | `data/achtbanen.json` | Wordt automatisch gemaakt. Niet zelf aanpassen. Valt onder de ODbL (zie Bronnen). |
 | `data/details.json` | Bestaat alleen als `achtbanen.json` groter zou worden dan 3 MB. Ook automatisch. |
 | `fotos/` | Je eigen foto's. |
-| `index.html` | De startpagina met teller, kaart en zoeklijst. |
+| `index.html` | De startpagina met jouw teller, kaart, de ranglijst van vrienden en de zoeklijst. |
+| `profiel.html` | Het profiel van een vriend: `profiel.html?wie=gebruikersnaam`. |
+| `vergelijk.html` | Twee mensen vergelijken: `vergelijk.html?a=ruben&b=anna`. |
+| `assets/delen.png` | Het plaatje dat WhatsApp en andere apps tonen als je een link deelt. |
 | `achtbaan.html` | De attractiepagina. Toont elke achtbaan via `achtbaan.html?id=…`. |
 | `beheer.html` | Het beheerpaneel. Staat niet in het menu; alleen voor jou. |
 | `account.html` | Inloggen met een link per mail, je profiel en uitloggen. |
@@ -111,6 +114,17 @@ Zolang jouw account nog geen ritten heeft, toont de startpagina gewoon je credit
 - **Afvinken** in het overzicht van je eigen lijst (zie *Afvinkmodus* hieronder).
 
 Wat je opslaat staat meteen op de site, voor iedereen. Op de pagina van een achtbaan zie je, als je bent ingelogd, je eigen rit. Bezoekers zonder account zien jouw rit, zoals altijd.
+
+## Delen en vergelijken
+
+- **Profiel**: iedereen heeft een eigen pagina, zoals `https://rudemer.github.io/achtbanen/profiel.html?wie=anna`. Daar staan dezelfde teller, het treintje, de records, de kaart en de lijst als op de startpagina. Op je eigen profiel vink je af en bewerk je je ritten. Je komt er via je naam rechtsboven.
+- **Ranglijst**: op de startpagina, onder de kaart (**Vrienden** in het menu). Op aantal credits, met landen en parken. Wie bij *Mijn account* het vinkje voor de ranglijst uitzet, staat er niet in en ook niet bij *Ook gereden door* of in het filter. Diens profiel is dan alleen te vinden met de eigen link.
+- **Ook gereden door**: op de pagina van een achtbaan, met datum, cijfer en notitie.
+- **Vergelijken**: `vergelijk.html`, of **Vergelijk met mij** op het profiel van een vriend. Je ziet wat jullie allebei gereden hebben, wat alleen de één en wat alleen de ander.
+- **Gereden door …**: een filter in de lijst met alle achtbanen. Combineer het bijvoorbeeld met *Alleen gereden* om te zien wat jullie allebei hebben.
+- **Delen**: de knop onder de teller. Op een telefoon opent het deelmenu (WhatsApp, Berichten, …); op een computer wordt de link gekopieerd.
+
+Als iemand een link in WhatsApp plakt, toont WhatsApp een voorbeeld met titel, korte tekst en `assets/delen.png`. Die gegevens staan vast in de HTML (Open Graph), omdat WhatsApp geen JavaScript uitvoert. Daarom staat er bij een profiel een algemene tekst en niet het aantal credits. WhatsApp onthoudt een voorbeeld een tijdje; zie je na een wijziging nog het oude, dan komt het nieuwe vanzelf. Deze tags verwijzen naar `https://rudemer.github.io/achtbanen/`; verhuist de site, pas dan in de HTML-bestanden `og:url` en `og:image` aan.
 
 ## Beheer: de lijst en je foto's (alleen jij)
 

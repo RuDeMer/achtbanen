@@ -634,6 +634,43 @@
     if (!d.length) throw new Error("Deze rit bestaat niet meer. Laad de pagina opnieuw.");
   }
 
+  /* ---------- Iedereen: profielen en ritten van alle vrienden ---------- */
+
+  async function haalAlles(tabel, velden, wat) {
+    const alle = [];
+    for (let van = 0; ; van += 1000) {
+      const rijen = await sbVraag(metTijd(sb.from(tabel).select(velden).order("id").range(van, van + 999)), wat);
+      alle.push(...rijen);
+      if (rijen.length < 1000) return alle;
+    }
+  }
+  let iedereenBelofte = null;
+  function laadIedereen() {
+    iedereenBelofte = iedereenBelofte || Promise.all([
+      haalAlles("profielen", PROFIEL_VELDEN, "Vrienden ophalen"),
+      haalAlles("ritten", "id,gebruiker,achtbaan", "Credits van vrienden ophalen"),
+    ]).then(([profielen, ritten]) => ({ profielen, ritten }));
+    iedereenBelofte.catch(() => { iedereenBelofte = null; }); // later opnieuw proberen
+    return iedereenBelofte;
+  }
+
+  // Per persoon de banen die hij of zij gereden heeft, op dezelfde manier geteld als de teller
+  function banenPerPersoon(data, iedereen) {
+    const per = new Map(iedereen.profielen.map((p) => [p.id, { profiel: p, banen: new Set() }]));
+    for (const r of iedereen.ritten) {
+      const x = per.get(r.gebruiker);
+      if (x) for (const a of banenVanRit(data, r.achtbaan)) x.banen.add(a);
+    }
+    // De eigenaar zonder ritten in Supabase: zijn credits staan nog in gereden.json
+    for (const x of per.values()) {
+      if (x.profiel.gebruikersnaam === SITE.eigenaar && !x.banen.size) {
+        for (const r of data.jsonRitten) for (const a of banenVanRit(data, r.id)) x.banen.add(a);
+      }
+    }
+    return per;
+  }
+  const opWeergavenaam = (x, y) => x.weergavenaam.localeCompare(y.weergavenaam, TAAL);
+
   // Wordt er na het opslaan nog iets gepubliceerd (GitHub), of zie je het meteen (Supabase)?
   const opgeslagenTekst = (data, wat = "Opgeslagen") =>
     inSupabase(data) ? `${wat}.` : `${wat}. Over een paar minuten staat het ook op de openbare site.`;
@@ -839,6 +876,7 @@
       zoek: $("#zoek"), land: $("#land"), status: $("#status"), sorteer: $("#sorteer"),
       gereden: $("#alleen-gereden"), raster: $("#raster"), meer: $("#meer"),
       tekst: $("#resultaten-tekst"), park: $("#park-filter"), filters: $(".filters"),
+      door: $("#door"), doorVeld: $("#door-veld"),
     };
 
     const perLand = new Map();
@@ -854,6 +892,7 @@
       sorteer: SORTERINGEN[params.get("sorteer")] ? params.get("sorteer") : "naam",
       gereden: params.get("gereden") === "1",
       park: params.get("park") || "",
+      door: (params.get("door") || "").toLowerCase(),
       toon: PER_KEER,
     };
     el.zoek.value = st.q;
@@ -873,6 +912,7 @@
       if (st.sorteer !== "naam") u.set("sorteer", st.sorteer);
       if (st.gereden) u.set("gereden", "1");
       if (st.park) u.set("park", st.park);
+      if (st.door) u.set("door", st.door);
       const qs = u.toString();
       history.replaceState(null, "", location.pathname + (qs ? `?${qs}` : "") + location.hash);
     }
@@ -882,9 +922,35 @@
       return a ? a.park : st.park;
     }
 
+    // Filter "Gereden door …": de banen van één vriend (jezelf: zoals je lijst nu is)
+    let perPersoon = null;
+    const doorProfiel = () => (perPersoon ? [...perPersoon.values()].find((x) => x.profiel.gebruikersnaam === st.door) : null);
+    function doorBanen() {
+      if (!st.door) return null;
+      if (data.persoon && data.persoon.profiel && data.persoon.profiel.gebruikersnaam === st.door) return new Set(data.gereden);
+      const x = doorProfiel();
+      return x ? x.banen : null;
+    }
+    if (sbAan && el.door) {
+      el.doorVeld.hidden = false;
+      el.filters.classList.add("met-door");
+      laadIedereen().then((iedereen) => {
+        perPersoon = banenPerPersoon(data, iedereen);
+        const mensen = iedereen.profielen
+          .filter((p) => p.in_ranglijst || (ik && ik.id === p.id) || p.gebruikersnaam === st.door)
+          .sort(opWeergavenaam);
+        for (const p of mensen) el.door.add(new Option(ik && ik.id === p.id ? `${p.weergavenaam} (ik)` : p.weergavenaam, p.gebruikersnaam));
+        el.door.value = st.door;
+        if (st.door) { st.door = el.door.value; bereken(); toon(false); }
+      }).catch((e) => { console.warn(e); el.doorVeld.hidden = true; el.filters.classList.remove("met-door"); });
+      el.door.addEventListener("change", () => { st.door = el.door.value; ververs(); });
+    }
+
     function bereken() {
       const woorden = zoekbaar(st.q).split(/\s+/).filter(Boolean);
+      const door = doorBanen();
       resultaat = lijst.filter((a) =>
+        (!door || door.has(a)) &&
         (!st.gereden || a.rit) &&
         (!st.land || a.land === st.land) &&
         (!st.status || a.status === st.status) &&
@@ -895,10 +961,11 @@
 
     function toon(alleenNieuwe) {
       const n = resultaat.length;
-      const gefilterd = st.q || st.land || st.status || st.park || st.gereden;
+      const gefilterd = st.q || st.land || st.status || st.park || st.gereden || st.door;
+      const door = st.door && doorProfiel() ? `, gereden door ${doorProfiel().profiel.weergavenaam}` : "";
       el.tekst.textContent = st.gereden
-        ? `${getal(n)} ${meervoud(n, "credit", "credits")}`
-        : `${getal(n)} ${meervoud(n, "achtbaan", "achtbanen")}${gefilterd ? " gevonden" : " in de lijst"}`;
+        ? `${getal(n)} ${meervoud(n, "credit", "credits")}${door}`
+        : `${getal(n)} ${meervoud(n, "achtbaan", "achtbanen")}${gefilterd ? " gevonden" : " in de lijst"}${door}`;
 
       el.park.innerHTML = st.park
         ? `<button class="chip" type="button" id="park-wis">Alleen ${esc(parkNaam())} <span aria-hidden="true">×</span><span class="sr">filter wissen</span></button>`
@@ -1039,8 +1106,9 @@
 
     function ververs() { st.toon = PER_KEER; bereken(); toon(false); bewaarInAdres(); }
     function wisAlles() {
-      Object.assign(st, { q: "", land: "", status: "", park: "", gereden: false });
+      Object.assign(st, { q: "", land: "", status: "", park: "", gereden: false, door: "" });
       el.zoek.value = ""; el.land.value = ""; el.status.value = ""; el.gereden.checked = false;
+      if (el.door) el.door.value = "";
       ververs();
     }
 
@@ -1091,8 +1159,11 @@
     }
     // De startpagina is van de eigenaar: zijn credits uit Supabase, of uit gereden.json
     zetPersoon(data, await laadEigenaar(data));
-    const vulBoven = () => { vulHero(data); vulFeiten(data.gereden); tekenKaart(data.gereden); };
+    const vulBoven = () => {
+      vulHero(data); vulFeiten(data.gereden); tekenKaart(data.gereden); tekenProfielKnoppen(data, data.persoon.profiel);
+    };
     vulBoven();
+    tekenRanglijst(data);
     startOverzicht(data, vulBoven);
     if (data.bijgewerkt) $("#bijgewerkt").textContent = `, bijgewerkt op ${datum(data.bijgewerkt)}`;
   }
@@ -1791,6 +1862,7 @@
       </header>
       ${specsHtml(a)}
       ${ritHtml(a, data)}
+      <section class="blok ook-gereden" id="ook-gereden" hidden></section>
       <div class="twee">
         <section class="over" id="over" hidden><h2>Over deze achtbaan</h2><div id="wiki"></div></section>
         <section class="plaats"><h2>Waar staat hij?</h2><div class="minikaart" id="minikaart" role="region" aria-label="Kaart"></div></section>
@@ -1810,6 +1882,7 @@
     });
 
     tekenMiniKaart(a);
+    tekenOokGereden(a, data);
 
     const opnieuw = () => tekenAchtbaan(a, data);
     if (magRitten(data)) {
@@ -1956,6 +2029,18 @@
         $("#beheer-onbekend").innerHTML = `<p class="fout">${data.onbekend.length} ${meervoud(data.onbekend.length, "rit verwijst", "ritten verwijzen")} naar een achtbaan die niet meer in de lijst staat:
           ${data.onbekend.map((r) => `<code>${esc(r.id)}</code>`).join(", ")}. Ze tellen niet mee. Kijk of de code in <code>data/gereden.json</code> klopt.</p>`;
       }
+      // Met accounts: ook de ritten van iedereen in Supabase
+      if (sbAan) {
+        try {
+          const iedereen = await laadIedereen();
+          const naam = new Map(iedereen.profielen.map((p) => [p.id, p.weergavenaam]));
+          const los = iedereen.ritten.filter((r) => !banenVanRit(data, r.achtbaan).length);
+          if (los.length) {
+            $("#beheer-onbekend").insertAdjacentHTML("beforeend", `<p class="fout">${los.length} ${meervoud(los.length, "rit in de accounts verwijst", "ritten in de accounts verwijzen")} naar een achtbaan die niet in de lijst staat:
+              ${los.map((r) => `<code>${esc(r.achtbaan)}</code> (${esc(naam.get(r.gebruiker) || "?")})`).join(", ")}. Ze tellen niet mee. Staat de baan er weer in, dan tellen ze vanzelf weer.</p>`);
+          }
+        } catch (e) { console.warn(e); }
+      }
       // Wat je hebt verborgen of gesplitst, en wat OpenStreetMap voorstelt om te splitsen
       const banenNaam = (id) => data.perId.get(id)?.heleNaam || data.perId.get(id)?.naam || id;
       const verborgen = [...data.verborgen.values()];
@@ -1981,6 +2066,215 @@
         })));
     }
 
+    teken();
+  }
+
+  /* ---------- Delen ----------
+     Op de telefoon het deelmenu van het toestel (WhatsApp, Berichten, …),
+     anders de link kopiëren. */
+  async function deel({ titel, tekst, url }) {
+    if (navigator.share && matchMedia("(pointer: coarse)").matches) {
+      try { await navigator.share({ title: titel, text: tekst, url }); return; } catch (e) {
+        if (e && e.name === "AbortError") return; // zelf geannuleerd
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast("Link gekopieerd. Plak hem in WhatsApp, een mail of waar je maar wilt.", true);
+    } catch (e) {
+      window.prompt("Kopieer deze link:", url);
+    }
+  }
+
+  // Knoppen onder de teller: delen, vergelijken, en bij je eigen profiel je account
+  function tekenProfielKnoppen(data, profiel) {
+    const vak = $("#profiel-knoppen");
+    if (!vak || !sbAan) return;
+    const eigen = !!(ik && profiel && ik.id === profiel.id);
+    const thuis = PAGINA === "home";
+    const url = thuis ? new URL("./", location.href).href : profielLink(profiel);
+    const n = data.gereden.length;
+    const vergelijk = !profiel ? "" : ik && !eigen
+      ? `vergelijk.html?a=${encodeURIComponent(ik.gebruikersnaam)}&b=${encodeURIComponent(profiel.gebruikersnaam)}`
+      : `vergelijk.html?a=${encodeURIComponent(profiel.gebruikersnaam)}`;
+    vak.innerHTML = `<button class="knop" type="button" id="deel-knop">${thuis ? "Deel de site" : eigen ? "Deel mijn profiel" : "Deel dit profiel"}</button>
+      ${vergelijk ? `<a class="knop knop-licht" href="${esc(vergelijk)}">${ik && !eigen ? "Vergelijk met mij" : "Vergelijken"}</a>` : ""}
+      ${eigen && !thuis ? '<a class="knop knop-licht" href="account.html">Mijn account</a>' : ""}`;
+    vak.hidden = false;
+    $("#deel-knop").addEventListener("click", () => deel({
+      titel: thuis ? SITE.naam : `${profiel.weergavenaam} | ${SITE.naam}`,
+      tekst: thuis
+        ? `${SITE.naam}: ${getal(n)} ${meervoud(n, "achtbaan", "achtbanen")} gereden.`
+        : `${profiel.weergavenaam} heeft ${getal(n)} ${meervoud(n, "achtbaan", "achtbanen")} gereden.`,
+      url,
+    }));
+  }
+
+  /* ---------- Profielpagina: profiel.html?wie=gebruikersnaam ---------- */
+
+  async function startProfiel() {
+    const wie = (params.get("wie") || "").trim().toLowerCase();
+    const melding = (titel, tekst) => {
+      $("main").innerHTML = `<div class="melding"><h1>${esc(titel)}</h1><p>${tekst}</p><p><a href="./">Naar de startpagina</a></p></div>`;
+    };
+    if (!sbAan) { melding("Profielen staan nog uit", "Deze site gebruikt nog geen accounts."); return; }
+    if (!wie) {
+      if (ik) { location.replace(`profiel.html?wie=${encodeURIComponent(ik.gebruikersnaam)}`); return; }
+      melding("Wiens profiel?", "In de link staat geen gebruikersnaam. Vraag je vriend om de link nog eens te sturen.");
+      return;
+    }
+    startBaan();
+    let data, profiel, persoon;
+    try {
+      [data, profiel] = await Promise.all([laadAlles(), GEBRUIKERSNAAM.test(wie) ? haalProfiel({ gebruikersnaam: wie }) : null]);
+      if (profiel) persoon = await laadPersoon(data, profiel);
+    } catch (e) {
+      $("#resultaten-tekst").textContent = "";
+      toonFout($("#raster"), e);
+      return;
+    }
+    if (!profiel) {
+      melding("Dit profiel bestaat niet", `Er is niemand met de gebruikersnaam <code>${esc(wie)}</code>. Misschien is de naam veranderd, of is het account verwijderd.`);
+      return;
+    }
+    zetPersoon(data, persoon);
+    const eigen = !!ik && ik.id === profiel.id;
+    document.title = `${profiel.weergavenaam} | ${SITE.naam}`;
+    $("#profiel-naam").textContent = profiel.weergavenaam;
+    $("#kaart-titel").textContent = eigen ? "Waar ik heb gereden" : `Waar ${profiel.weergavenaam} heeft gereden`;
+    $("#kaart").setAttribute("aria-label", `Kaart met parken waar ${eigen ? "ik heb" : `${profiel.weergavenaam} heeft`} gereden`);
+    const vulBoven = () => {
+      vulHero(data); vulFeiten(data.gereden); tekenKaart(data.gereden); tekenProfielKnoppen(data, profiel);
+    };
+    vulBoven();
+    startOverzicht(data, vulBoven);
+    if (data.bijgewerkt) $("#bijgewerkt").textContent = `, bijgewerkt op ${datum(data.bijgewerkt)}`;
+  }
+
+  /* ---------- Ranglijst op de startpagina ---------- */
+
+  async function tekenRanglijst(data) {
+    const sectie = $("#ranglijst");
+    if (!sectie || !sbAan) return;
+    let iedereen;
+    try { iedereen = await laadIedereen(); } catch (e) {
+      sectie.hidden = false;
+      $("#ranglijst-vak").innerHTML = `<p class="fout">${esc(e.message)}</p>`;
+      return;
+    }
+    const rijen = [...banenPerPersoon(data, iedereen).values()]
+      .filter((x) => x.profiel.in_ranglijst)
+      .map((x) => { const b = [...x.banen]; return { p: x.profiel, n: b.length, landen: telLanden(b), parken: telParken(b) }; })
+      .sort((x, y) => y.n - x.n || y.landen - x.landen || y.parken - x.parken || opWeergavenaam(x.p, y.p));
+    if (!rijen.length) return;
+    let plaats = 0;
+    const regels = rijen.map((x, i) => {
+      if (!i || x.n !== rijen[i - 1].n) plaats = i + 1; // gelijk aantal: gedeelde plaats
+      return `<tr${ik && ik.id === x.p.id ? ' class="is-ik"' : ""}>
+        <td class="plaats">${plaats}</td>
+        <td class="naam"><a href="${esc(profielLink(x.p))}">${esc(x.p.weergavenaam)}</a></td>
+        <td class="getal credits">${getal(x.n)}</td>
+        <td class="getal">${getal(x.landen)}</td>
+        <td class="getal">${getal(x.parken)}</td></tr>`;
+    }).join("");
+    $("#ranglijst-tekst").textContent = `${rijen.length} ${meervoud(rijen.length, "persoon", "personen")}`;
+    $("#ranglijst-vak").innerHTML = `
+      <table class="ranglijst">
+        <caption class="sr">Ranglijst op aantal credits</caption>
+        <thead><tr><th scope="col"><span class="sr">Plaats</span></th><th scope="col">Naam</th><th scope="col" class="getal">Credits</th><th scope="col" class="getal">Landen</th><th scope="col" class="getal">Parken</th></tr></thead>
+        <tbody>${regels}</tbody>
+      </table>
+      <p class="ranglijst-voet"><a href="vergelijk.html">Vergelijk twee vrienden</a>${ik && !ik.in_ranglijst
+        ? ' <span class="klein">Jij staat er niet tussen. Dat kun je aanzetten bij <a href="account.html">Mijn account</a>.</span>' : ""}</p>`;
+    sectie.hidden = false;
+  }
+
+  /* ---------- Attractiepagina: ook gereden door ---------- */
+
+  async function tekenOokGereden(a, data) {
+    const vak = $("#ook-gereden");
+    if (!vak || !sbAan) return;
+    let rijen, iedereen;
+    try {
+      [rijen, iedereen] = await Promise.all([
+        sbVraag(metTijd(sb.from("ritten").select("id,gebruiker,achtbaan,datum,cijfer,notitie").in("achtbaan", codesVoor(data, a)).order("id")), "Ritten ophalen"),
+        laadIedereen(),
+      ]);
+    } catch (e) { console.warn(e); return; }
+    const profielen = new Map(iedereen.profielen.map((p) => [p.id, p]));
+    const per = new Map();
+    const voegToe = (p, rit) => { if (!per.has(p.id)) per.set(p.id, { p, ritten: [] }); per.get(p.id).ritten.push(rit); };
+    for (const r of rijen) {
+      const p = profielen.get(r.gebruiker);
+      if (p && banenVanRit(data, r.achtbaan).includes(a)) voegToe(p, naarRit(r));
+    }
+    // De eigenaar die zijn credits nog niet heeft overgezet
+    const eigenaar = iedereen.profielen.find((p) => p.gebruikersnaam === SITE.eigenaar);
+    if (eigenaar && !iedereen.ritten.some((r) => r.gebruiker === eigenaar.id)) {
+      for (const r of data.jsonRitten) if (banenVanRit(data, r.id).includes(a)) voegToe(eigenaar, r);
+    }
+    const zelf = data.persoon && data.persoon.profiel ? data.persoon.profiel.id : null;
+    const lijst = [...per.values()].filter((x) => x.p.id !== zelf && x.p.in_ranglijst).map(({ p, ritten }) => {
+      ritten.sort((x, y) => String(x.datum || "9999").localeCompare(String(y.datum || "9999")));
+      const laatste = (veld) => ritten.map((r) => r[veld]).filter((w) => w != null && w !== "").pop();
+      return { p, keer: ritten.length, eerste: ritten.every((r) => r.datum) ? ritten[0].datum : null, cijfer: laatste("cijfer"), notitie: laatste("notitie") };
+    }).sort((x, y) => String(x.eerste || "9999").localeCompare(String(y.eerste || "9999")) || opWeergavenaam(x.p, y.p));
+    if (!lijst.length) { vak.hidden = true; return; }
+    vak.innerHTML = `<h2>${a.rit ? "Ook gereden door" : "Gereden door"}</h2>
+      <ul class="ook-lijst">${lijst.map((x) => {
+        const info = [x.eerste ? datum(x.eerste, true) : "", x.keer > 1 ? `${x.keer} keer` : "", x.cijfer ? `${getal(x.cijfer, 1)}/10` : ""].filter(Boolean).join(" · ");
+        return `<li><a href="${esc(profielLink(x.p))}">${esc(x.p.weergavenaam)}</a>${info ? ` <span class="ook-info">${esc(info)}</span>` : ""}${x.notitie ? `<span class="ook-notitie">${esc(x.notitie)}</span>` : ""}</li>`;
+      }).join("")}</ul>`;
+    vak.hidden = false;
+  }
+
+  /* ---------- Vergelijken: vergelijk.html?a=…&b=… ---------- */
+
+  async function startVergelijk() {
+    const uit = $("#vergelijk-uitslag");
+    if (!sbAan) { uit.innerHTML = '<div class="melding"><h1>Vergelijken staat nog uit</h1><p>Deze site gebruikt nog geen accounts.</p></div>'; return; }
+    let data, iedereen;
+    try { [data, iedereen] = await Promise.all([laadAlles(), laadIedereen()]); } catch (e) { toonFout(uit, e); return; }
+    const per = banenPerPersoon(data, iedereen);
+    const opNaam = new Map(iedereen.profielen.map((p) => [p.gebruikersnaam, p]));
+    const eigenaar = opNaam.get(SITE.eigenaar);
+    let a = opNaam.get((params.get("a") || "").toLowerCase()) || ik || eigenaar || iedereen.profielen[0];
+    let b = opNaam.get((params.get("b") || "").toLowerCase());
+    const keuzes = iedereen.profielen.filter((p) => p.in_ranglijst || p === a || p === b || (ik && ik.id === p.id)).sort(opWeergavenaam);
+    if (!b || b === a) b = (a !== eigenaar && eigenaar) || keuzes.find((p) => p !== a);
+    if (!a || !b) {
+      $("#vergelijk-kies").hidden = true;
+      uit.innerHTML = '<div class="melding"><h1>Nog niemand om mee te vergelijken</h1><p>Er is pas één profiel. Nodig een vriend uit!</p></div>';
+      return;
+    }
+    const kies = [$("#kies-a"), $("#kies-b")];
+    for (const k of kies) for (const p of keuzes) k.add(new Option(ik && ik.id === p.id ? `${p.weergavenaam} (ik)` : p.weergavenaam, p.gebruikersnaam));
+    kies[0].value = a.gebruikersnaam;
+    kies[1].value = b.gebruikersnaam;
+    kies.forEach((k) => k.addEventListener("change", () => {
+      a = opNaam.get(kies[0].value); b = opNaam.get(kies[1].value);
+      history.replaceState(null, "", `vergelijk.html?a=${encodeURIComponent(a.gebruikersnaam)}&b=${encodeURIComponent(b.gebruikersnaam)}`);
+      teken();
+    }));
+    const opNaamBaan = (x, y) => x.naam.localeCompare(y.naam, TAAL) || String(x.park || "").localeCompare(String(y.park || ""), TAAL);
+    const lijstHtml = (banen) => (banen.length
+      ? `<ul class="park-lijst vergelijk-lijst">${banen.map((x) => `<li><a href="${pagina(x)}">${esc(x.naam)}</a>${x.park ? `<span class="dicht">${esc(x.park)}</span>` : ""}</li>`).join("")}</ul>`
+      : '<p class="klein">Geen.</p>');
+    function teken() {
+      document.title = `${a.weergavenaam} tegen ${b.weergavenaam} | ${SITE.naam}`;
+      const A = per.get(a.id).banen, B = per.get(b.id).banen;
+      const beide = [...A].filter((x) => B.has(x)).sort(opNaamBaan);
+      const alleenA = [...A].filter((x) => !B.has(x)).sort(opNaamBaan);
+      const alleenB = [...B].filter((x) => !A.has(x)).sort(opNaamBaan);
+      const kant = (p, n) => `<a class="score-kant" href="${esc(profielLink(p))}"><span class="score-getal">${getal(n)}</span><span class="score-naam">${esc(p.weergavenaam)}</span></a>`;
+      const blok = (titel, banen) => `<section class="blok"><h2>${esc(titel)} <span class="aantal">${getal(banen.length)}</span></h2>${lijstHtml(banen)}</section>`;
+      uit.innerHTML = a === b
+        ? '<p class="binnen">Kies twee verschillende personen.</p>'
+        : `<section class="score" aria-label="Aantal credits">${kant(a, A.size)}<span class="score-midden">tegen</span>${kant(b, B.size)}</section>
+          ${blok("Allebei gereden", beide)}
+          ${blok(`Alleen ${a.weergavenaam}`, alleenA)}
+          ${blok(`Alleen ${b.weergavenaam}`, alleenB)}`;
+    }
     teken();
   }
 
@@ -2141,7 +2435,7 @@
 
   function tekenAccount(vak) {
     const menu = $(".kop nav .nav-ik");
-    if (menu) { menu.textContent = ik.weergavenaam; menu.title = "Mijn account"; }
+    if (menu) { menu.textContent = ik.weergavenaam; menu.title = "Mijn credits"; menu.href = profielLink(ik); }
     vak.innerHTML = `
       <p class="beheer-aan"><strong>Je bent ingelogd als ${esc(ik.weergavenaam)}.</strong></p>
       <div class="knoppen">
@@ -2215,9 +2509,10 @@
   function tekenMenu() {
     const nav = $(".kop nav");
     if (nav && sbAan) {
+      nav.insertAdjacentHTML("beforeend", `<a href="${PAGINA === "home" ? "" : "./"}#ranglijst">Vrienden</a>`);
       nav.insertAdjacentHTML("beforeend", ik
-        ? `<a href="account.html" class="nav-ik" title="Mijn account">${esc(ik.weergavenaam)}</a>`
-        : `<a href="account.html" class="nav-ik">Inloggen</a>`);
+        ? `<a href="${esc(profielLink(ik))}" class="nav-ik" title="Mijn credits">${esc(ik.weergavenaam)}</a>`
+        : '<a href="account.html" class="nav-ik">Inloggen</a>');
     }
     if (nav && beheer && PAGINA !== "beheer") nav.insertAdjacentHTML("beforeend", '<a href="beheer.html" class="nav-beheer">Beheer</a>');
     const voet = $(".voet");
@@ -2228,13 +2523,16 @@
 
   /* ---------- Starten ---------- */
   document.querySelectorAll("[data-sitenaam]").forEach((el) => { el.textContent = SITE.naam; });
-  if (["home", "achtbaan"].includes(PAGINA)) laadAlles().catch(() => { /* de pagina toont de fout */ });
+  if (["home", "achtbaan", "profiel", "vergelijk"].includes(PAGINA)) laadAlles().catch(() => { /* de pagina toont de fout */ });
   (async () => {
     if (!(await startAccount())) return;
+    if (sbAan && ["home", "achtbaan", "profiel", "vergelijk"].includes(PAGINA)) laadIedereen().catch(() => { /* de pagina toont de fout */ });
     tekenMenu();
     if (PAGINA === "home") { document.title = SITE.naam; startPagina(); }
     if (PAGINA === "achtbaan") startAchtbaan();
     if (PAGINA === "beheer") startBeheer();
     if (PAGINA === "account") startAccountPagina();
+    if (PAGINA === "profiel") startProfiel();
+    if (PAGINA === "vergelijk") startVergelijk();
   })();
 })();
