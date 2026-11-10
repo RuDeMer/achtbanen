@@ -1,0 +1,40 @@
+name: Tijdelijke test van het script (met OpenStreetMap)
+
+# Tijdelijk: draait het script één keer op deze branch, met OpenStreetMap erbij (dat lukt
+# niet vanaf de testcomputer). De nieuwe gegevens komen alleen op deze branch, niet op main.
+# Wordt weer weggehaald voordat de branch naar main gaat.
+on:
+  push:
+    branches: [claude/sweet-bardeen-cqenx7]
+    paths: [".github/workflows/test-osm.yml"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: test-osm
+  cancel-in-progress: true
+
+jobs:
+  script:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Bestanden ophalen
+        uses: actions/checkout@v5
+
+      - name: Tests en het script
+        run: |
+          python3 scripts/test_gegevens.py
+          python3 scripts/haal_achtbanen.py
+
+      - name: Gegevens op deze branch zetten
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data
+          if ! git diff --cached --quiet; then
+            git commit -m "Test: gegevens van een run met OpenStreetMap"
+            git pull --rebase origin claude/sweet-bardeen-cqenx7
+            git push origin HEAD:claude/sweet-bardeen-cqenx7
+          fi
