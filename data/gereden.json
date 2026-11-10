@@ -1,4 +1,5 @@
 {
+  "uitleg": "Reservekopie van je credits. Wordt elke week bijgewerkt vanuit Supabase; je ritten zelf staan in je account.",
   "gereden": [
     { "id": "Q18285730", "datum": "2015-06-30" },
     { "id": "Q888394" },
