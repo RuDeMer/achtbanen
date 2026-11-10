@@ -1456,8 +1456,9 @@ def supabase_codes():
         tekst = (MAP / "config.js").read_text(encoding="utf-8")
     except OSError:
         return set()
-    url = re.search(r'supabaseUrl:\s*"(https://[a-z0-9-]+\.supabase\.co)/?"', tekst)
-    sleutel = re.search(r'supabaseSleutel:\s*"([^"]+)"', tekst)
+    # Wat er achter .supabase.co staat (zoals /rest/v1/), telt niet mee
+    url = re.search(r'supabaseUrl:\s*"\s*(https://[a-z0-9-]+\.supabase\.co)(?:/[^"]*)?\s*"', tekst)
+    sleutel = re.search(r'supabaseSleutel:\s*"\s*([^"\s]+)\s*"', tekst)
     if not url or not sleutel:
         return set()
     if sleutel.group(1).startswith("sb_secret_"):

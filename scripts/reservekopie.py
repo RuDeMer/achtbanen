@@ -34,8 +34,9 @@ USER_AGENT = "AchtbanenSite/1.0 (reservekopie; persoonlijke achtbanensite)"
 
 def instellingen():
     tekst = (MAP / "config.js").read_text(encoding="utf-8")
-    url = re.search(r'supabaseUrl:\s*"(https://[a-z0-9-]+\.supabase\.co)/?"', tekst)
-    sleutel = re.search(r'supabaseSleutel:\s*"([^"]+)"', tekst)
+    # Wat er achter .supabase.co staat (zoals /rest/v1/), telt niet mee
+    url = re.search(r'supabaseUrl:\s*"\s*(https://[a-z0-9-]+\.supabase\.co)(?:/[^"]*)?\s*"', tekst)
+    sleutel = re.search(r'supabaseSleutel:\s*"\s*([^"\s]+)\s*"', tekst)
     eigenaar = re.search(r'eigenaar:\s*"([^"]*)"', tekst)
     if sleutel and sleutel.group(1).startswith("sb_secret_"):
         sys.exit("In config.js staat een GEHEIME sleutel. Haal hem meteen weg en maak in Supabase een nieuwe aan.")
