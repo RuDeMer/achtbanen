@@ -567,3 +567,18 @@ a.knop-klein { text-decoration: none; display: inline-block; }
 .privacy .stappen li { margin-bottom: .5rem; }
 .voet-links { display: flex; flex-wrap: wrap; gap: .3rem 1.25rem; }
 .voet-links:empty { display: none; }
+
+/* ---------- bronnen per gegeven, aanvullen ---------- */
+
+.specs div { flex-direction: column; }
+.specs dd { order: 1; }
+.specs dt { order: 2; }
+.specs dd.spec-bron { order: 3; font-family: var(--tekst); font-weight: 400; font-size: .72rem; line-height: 1.3; color: var(--inkt-zacht); margin-top: .1rem; }
+.specs dd.spec-bron a { color: inherit; text-decoration-thickness: 1px; }
+.vorig { margin: .35rem 0 0; color: var(--inkt-zacht); }
+.bronnen-lijst { margin: 0 0 .5rem; padding-left: 1.1rem; font-size: .92rem; }
+.bronnen-lijst li { margin-bottom: .2rem; }
+.bron-naam { font-weight: 600; }
+.dialoog-breed { width: min(100% - 2rem, 44rem); }
+.av-velden { display: grid; grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr)); gap: 0 .9rem; }
+.av-nu { font-size: .75rem; color: var(--inkt-zacht); }

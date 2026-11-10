@@ -30,28 +30,31 @@ jobs:
           # Altijd de nieuwste versie, ook als er net een andere run iets heeft opgeslagen
           ref: main
 
-      - name: Achtbanen ophalen bij Wikidata en OpenStreetMap en opslaan
+      - name: Achtbanen ophalen bij Wikidata, Wikipedia en OpenStreetMap en opslaan
         # Bij een gewone wijziging alleen als de lijst er nog niet is,
         # bij de maandelijkse of handmatige run altijd.
         if: github.event_name != 'push' || hashFiles('data/achtbanen.json') == ''
         run: |
+          python3 scripts/test_gegevens.py
           python3 scripts/haal_achtbanen.py
-          # Nieuwe lijst apart zetten, de nieuwste versie van GitHub ophalen
-          # en de lijst er daarna overheen zetten. Zo kan er geen conflict ontstaan.
-          # (details.json bestaat alleen als achtbanen.json te groot werd.)
-          cp data/achtbanen.json "$RUNNER_TEMP/achtbanen.json"
-          rm -f "$RUNNER_TEMP/details.json"
-          if [ -f data/details.json ]; then cp data/details.json "$RUNNER_TEMP/details.json"; fi
+          # Nieuwe lijst, details en rapport apart zetten, de nieuwste versie van GitHub
+          # ophalen en ze er daarna overheen zetten. Zo kan er geen conflict ontstaan.
+          rm -rf "$RUNNER_TEMP/nieuw" && mkdir -p "$RUNNER_TEMP/nieuw"
+          cp data/achtbanen.json "$RUNNER_TEMP/nieuw/"
+          if [ -d data/details ]; then cp -r data/details "$RUNNER_TEMP/nieuw/details"; fi
+          if [ -f data/rapport.json ]; then cp data/rapport.json "$RUNNER_TEMP/nieuw/"; fi
           git fetch origin main
           git reset --hard origin/main
-          cp "$RUNNER_TEMP/achtbanen.json" data/achtbanen.json
-          if [ -f "$RUNNER_TEMP/details.json" ]; then cp "$RUNNER_TEMP/details.json" data/details.json; else rm -f data/details.json; fi
+          cp "$RUNNER_TEMP/nieuw/achtbanen.json" data/achtbanen.json
+          rm -rf data/details data/details.json
+          if [ -d "$RUNNER_TEMP/nieuw/details" ]; then cp -r "$RUNNER_TEMP/nieuw/details" data/details; fi
+          if [ -f "$RUNNER_TEMP/nieuw/rapport.json" ]; then cp "$RUNNER_TEMP/nieuw/rapport.json" data/rapport.json; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A data/achtbanen.json
-          git add -A data/details.json 2>/dev/null || true
+          git add -A data/achtbanen.json data/details
+          git add -A data/details.json data/rapport.json 2>/dev/null || true
           if ! git diff --cached --quiet; then
-            git commit -m "Achtbanen bijgewerkt vanuit Wikidata en OpenStreetMap"
+            git commit -m "Achtbanen bijgewerkt vanuit Wikidata, Wikipedia en OpenStreetMap"
             git push origin HEAD:main
           fi
 

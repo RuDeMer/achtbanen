@@ -36,16 +36,15 @@ import urllib.parse
 import urllib.request
 from collections import defaultdict
 
+import normaliseer as norm
+import wikipedia as wp
+
 MAP = pathlib.Path(__file__).resolve().parent.parent
 UITVOER = MAP / "data" / "achtbanen.json"
 DETAILS = MAP / "data" / "details.json"
 GEREDEN = MAP / "data" / "gereden.json"
 EXTRA = MAP / "data" / "extra.json"
 SPLITSEN = MAP / "data" / "splitsen.json"
-
-# Wordt achtbanen.json groter dan dit, dan gaan velden die alleen de
-# attractiepagina gebruikt naar data/details.json.
-MAX_GROOTTE = int(os.environ.get("ACHTBANEN_MAX_BYTES", 3_000_000))
 
 REPO = os.environ.get("GITHUB_REPOSITORY", "onbekend")
 USER_AGENT = f"AchtbanenSite/1.0 (persoonlijke achtbanensite; https://github.com/{REPO})"
@@ -96,6 +95,8 @@ PREFIXEN = """
 PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
 PREFIX p: <http://www.wikidata.org/prop/>
+PREFIX ps: <http://www.wikidata.org/prop/statement/>
+PREFIX pq: <http://www.wikidata.org/prop/qualifier/>
 PREFIX psn: <http://www.wikidata.org/prop/statement/value-normalized/>
 PREFIX wikibase: <http://wikiba.se/ontology#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -145,6 +146,40 @@ WHERE {{
   OPTIONAL {{ ?item wdt:P176 ?fab . }}
 }}
 GROUP BY ?item
+"""
+
+# Vraag 3: materiaal (staal, hout), staat (open, gesloten), begin en einde van de dienst,
+# en de koppeling naar OpenStreetMap die Wikidata zelf kent
+VRAAG_EXTRA = PREFIXEN + f"""
+SELECT ?item
+  (GROUP_CONCAT(DISTINCT STR(?mat); separator="|") AS ?materialen)
+  (GROUP_CONCAT(DISTINCT STR(?staat); separator="|") AS ?staten)
+  (GROUP_CONCAT(DISTINCT STR(?b); separator="|") AS ?beginnen)
+  (GROUP_CONCAT(DISTINCT STR(?e); separator="|") AS ?einden)
+  (GROUP_CONCAT(DISTINCT STR(?way); separator="|") AS ?ways)
+  (GROUP_CONCAT(DISTINCT STR(?node); separator="|") AS ?nodes)
+WHERE {{
+  ?item wdt:P31/wdt:P279* {ACHTBAAN} .
+  OPTIONAL {{ ?item wdt:P186 ?mat . }}
+  OPTIONAL {{ ?item wdt:P5817 ?staat . }}
+  OPTIONAL {{ ?item wdt:P580|wdt:P729 ?b . }}
+  OPTIONAL {{ ?item wdt:P582|wdt:P730 ?e . }}
+  OPTIONAL {{ ?item wdt:P10689 ?way . }}
+  OPTIONAL {{ ?item wdt:P11693 ?node . }}
+}}
+GROUP BY ?item
+"""
+
+# Vraag 4: in welk park stond de baan wanneer? Voor banen die verhuisd zijn.
+VRAAG_PLEKKEN = PREFIXEN + f"""
+SELECT ?item ?plek ?begin ?eind WHERE {{
+  ?item wdt:P31/wdt:P279* {ACHTBAAN} .
+  ?item p:P276|p:P361 ?s .
+  ?s ps:P276|ps:P361 ?plek ; wikibase:rank ?rang .
+  FILTER(?rang != wikibase:DeprecatedRank)
+  OPTIONAL {{ ?s pq:P580 ?begin . }}
+  OPTIONAL {{ ?s pq:P582 ?eind . }}
+}}
 """
 
 # Landcodes (NL, DE, ...) voor OSM-objecten met addr:country
@@ -383,8 +418,24 @@ def bouw_wikidata():
     print(f"  {len(basis)} achtbanen gevonden")
     time.sleep(2)
 
-    print("2/5 Hoogte, snelheid, lengte en jaartallen ophalen…")
+    print("2/5 Hoogte, snelheid, lengte, jaartallen, materiaal en status ophalen…")
     cijfers = {qid(waarde(r, "item")): r for r in vraag(VRAAG_CIJFERS)}
+    time.sleep(2)
+    try:
+        extra = {qid(waarde(r, "item")): r for r in vraag(VRAAG_EXTRA)}
+    except RuntimeError as fout:
+        print(f"  materiaal en status niet opgehaald: {fout}")
+        extra = {}
+    time.sleep(2)
+    plekken = defaultdict(set)
+    try:
+        for r in vraag(VRAAG_PLEKKEN):
+            q, plek = qid(waarde(r, "item")), qid(waarde(r, "plek"))
+            if q and plek:
+                begin, eind = jaren(waarde(r, "begin")), jaren(waarde(r, "eind"))
+                plekken[q].add((plek, begin[0] if begin else None, eind[0] if eind else None))
+    except RuntimeError as fout:
+        print(f"  parken met jaartallen niet opgehaald: {fout}")
     time.sleep(2)
 
     print("3/5 Uitzoeken welke locaties pretparken zijn…")
@@ -392,6 +443,8 @@ def bouw_wikidata():
     for r in basis.values():
         kandidaten.update(lijst_qids(waarde(r, "delen")))
         kandidaten.update(lijst_qids(waarde(r, "plekken")))
+    for lijst in plekken.values():
+        kandidaten.update(p for p, _, _ in lijst)
     parken = welke_zijn_parken(kandidaten)
     print(f"  {len(parken)} parken herkend")
 
@@ -402,64 +455,101 @@ def bouw_wikidata():
         nodig.update(lijst_qids(waarde(r, "plekken")))
         nodig.update(lijst_qids(waarde(r, "land1")))
         nodig.update(lijst_qids(waarde(cijfers.get(q, {}), "fabrikanten")))
-    return basis, cijfers, parken, nodig
+        nodig.update(lijst_qids(waarde(extra.get(q, {}), "materialen")))
+        nodig.update(lijst_qids(waarde(extra.get(q, {}), "staten")))
+    for lijst in plekken.values():
+        nodig.update(p for p, _, _ in lijst)
+    return basis, cijfers, extra, plekken, parken, nodig
 
 
-def maak_wikidata_lijst(basis, cijfers, parken, naam, alle_namen):
+# Velden met een bron: voor elk veld bewaart het script waar de waarde vandaan komt
+FEITEN = ("hoogte", "valhoogte", "lengte", "snelheid", "inversies", "duur",
+          "geopend", "gesloten", "status", "fabrikant", "model", "type")
+GEPLAND = re.compile(r"voorgesteld|proposed|planned|gepland|under construction|in aanbouw|im bau", re.I)
+
+
+def historie_van(plekken, parken):
+    """(huidig park, [vorige parken]) uit de parken met jaartallen, of (None, [])."""
+    lijst = sorted({p for p in plekken if p[0] in parken}, key=lambda p: (p[1] or 0, p[2] or 9999))
+    if len(lijst) < 2 or not any(b or e for _, b, e in lijst):
+        return None, []
+    huidig = lijst[-1]
+    vorige = [p for p in lijst[:-1] if p[0] != huidig[0]]
+    return huidig, vorige
+
+
+def maak_wikidata_lijst(basis, cijfers, extra, plekken, parken, naam, alle_namen):
     dit_jaar = datetime.date.today().year
     achtbanen = []
     for q, r in basis.items():
         if q not in naam:
             continue
-        c = cijfers.get(q, {})
+        c, x = cijfers.get(q, {}), extra.get(q, {})
 
         delen = lijst_qids(waarde(r, "delen"))
-        plekken = lijst_qids(waarde(r, "plekken"))
-        park_id = next((k for k in delen + plekken if k in parken), None)
+        plekken_q = lijst_qids(waarde(r, "plekken"))
+        # Verhuisd? Dan telt het park waar de baan het laatst kwam.
+        huidig, vorige = historie_van(plekken.get(q, set()), parken)
+        park_id = huidig[0] if huidig else next((k for k in delen + plekken_q if k in parken), None)
         park_zeker = park_id is not None
-        park_id = park_id or (plekken[0] if plekken else None) or (delen[0] if delen else None)
+        park_id = park_id or (plekken_q[0] if plekken_q else None) or (delen[0] if delen else None)
 
         types = [t for t in lijst_qids(waarde(r, "types")) if t != ACHTBAAN.split(":")[1]]
-        type_naam = next((naam[t] for t in types if t in naam), "achtbaan")
+        labels = [naam[t] for t in types if t in naam]
+        materialen = [naam[m] for m in lijst_qids(waarde(x, "materialen")) if m in naam]
+        staten = [naam[s] for s in lijst_qids(waarde(x, "staten")) if s in naam]
+        model = next((m for m in (norm.model_uit_label(l) for l in labels) if m), None)
 
-        fabrikant = next((naam[f] for f in lijst_qids(waarde(c, "fabrikanten")) if f in naam), None)
-        geopend = min(jaren(waarde(c, "geopend")) or jaren(waarde(c, "begin")) or [0]) or None
-        gesloten_veld = waarde(c, "gesloten")
-        gesloten = max(jaren(gesloten_veld) or [0]) or None
+        geopend = min(jaren(waarde(c, "geopend")) or jaren(waarde(c, "begin")) or jaren(waarde(x, "beginnen")) or [0]) or None
+        einden = jaren(waarde(c, "gesloten")) + jaren(waarde(x, "einden")) + ([huidig[2]] if huidig and huidig[2] else [])
+        gesloten = max(einden or [0]) or None
+        status = next((s for s in (wp.status_van(t) for t in staten) if s), None)
+        if not status:
+            if gesloten:
+                status = "gesloten"
+            elif geopend and geopend > dit_jaar:
+                status = "gepland"
+            elif any(GEPLAND.search(l) for l in labels):
+                status = "gepland"
 
-        if gesloten_veld:
-            status = "gesloten"
-        elif geopend and geopend > dit_jaar:
+        park_naam = naam.get(park_id) if park_id else None
+        schone_naam, bijna = norm.naam(naam[q], park_naam)
+        if bijna and not status:
             status = "gepland"
-        else:
-            status = "open"
-
         lat, lon = coordinaten(waarde(r, "coord1"))
         rcdb = waarde(r, "rcdb1")
+        fabrikant = next((naam[f] for f in lijst_qids(waarde(c, "fabrikanten")) if f in naam), None)
 
         a = {
             "id": q,
-            "naam": naam[q],
-            "park": naam.get(park_id) if park_id else None,
+            "naam": schone_naam,
+            "park": park_naam,
             "parkId": park_id,
-            "land": naam.get(qid(waarde(r, "land1"))),
-            "type": eerste_hoofdletter(type_naam),
-            "fabrikant": fabrikant,
-            "status": status,
-            "geopend": geopend,
-            "gesloten": gesloten,
-            "hoogte": getal(waarde(c, "hoogte"), maximaal=200, decimalen=1),
-            "snelheid": getal(waarde(c, "snelheid"), factor=3.6, maximaal=260),
-            "lengte": getal(waarde(c, "lengte"), maximaal=4000),
-            "duur": getal(waarde(c, "duur"), minimaal=5, maximaal=900),
+            "land": norm.land(naam.get(qid(waarde(r, "land1")))),
             "foto": bestandsnaam(waarde(r, "foto1")),
             "lat": lat,
             "lon": lon,
             "rcdb": rcdb if rcdb and rcdb.isdigit() else None,
-            # Alleen voor het samenvoegen, komt niet in het bestand
-            "_namen": alle_namen.get(q, set()) | {naam[q]},
+            # Alleen voor het samenvoegen en kiezen, komt niet in het bestand
+            "_namen": alle_namen.get(q, set()) | {naam[q], schone_naam},
             "_park_zeker": park_zeker,
+            "_osm_wd": {f"osm-way-{w}" for w in (waarde(x, "ways") or "").split("|") if w.strip().isdigit()}
+                       | {f"osm-node-{n}" for n in (waarde(x, "nodes") or "").split("|") if n.strip().isdigit()},
+            "_w": {"wd": {k: v for k, v in {
+                "hoogte": waarde(c, "hoogte"),
+                "snelheid": float(waarde(c, "snelheid")) * 3.6 if waarde(c, "snelheid") else None,
+                "lengte": waarde(c, "lengte"),
+                "duur": waarde(c, "duur"),
+                "geopend": geopend,
+                "gesloten": gesloten,
+                "status": status,
+                "fabrikant": fabrikant,
+                "model": model,
+                "type": " | ".join(labels + materialen) or None,
+            }.items() if v is not None}},
         }
+        if vorige:
+            a["_vorige"] = [{"park": naam.get(p), "parkId": p, "van": b, "tot": e} for p, b, e in vorige]
         achtbanen.append({k: v for k, v in a.items() if v is not None})
     return achtbanen
 
@@ -740,12 +830,16 @@ def lees_osm_banen(elementen, parken, tel):
         if station:
             # "Cobra Station" mag samengaan met de baan "Cobra"
             varianten += [k for k in (zonder_station(n) for n in varianten) if k]
+        geen = geen_achtbaan(naam, t)
         banen.append({
             "id": osm_id(el), "type": el["type"], "nummer": el["id"], "tags": t,
             "naam": naam, "varianten": varianten,
             "lat": lat, "lon": lon, "q": q if QID.fullmatch(q) else None,
             "park": parken.zoek(lat, lon),
-            "station": station, "vr": bool(VR.search(naam or "")), "geen": geen_achtbaan(naam, t),
+            "station": station, "vr": bool(VR.search(naam or "")),
+            # Alpine coasters (zomerrodelbanen op rails) blijven, met een eigen type
+            "alpine": geen == "zomerrodelbaan",
+            "geen": None if geen == "zomerrodelbaan" else geen,
         })
     return banen
 
@@ -792,7 +886,7 @@ def osm_waarden(groep):
             uit["fabrikant"] = (t.get("manufacturer") or "").strip() or None
         if not uit.get("type"):
             soort = (t.get("roller_coaster:type") or t.get("roller_coaster:material") or "").strip().lower()
-            uit["type"] = OSM_TYPES.get(soort.replace(" ", "_").replace("-", "_"))
+            uit["type"] = "Alpine coaster" if o.get("alpine") else OSM_TYPES.get(soort.replace(" ", "_").replace("-", "_"))
         if not uit.get("iso"):
             uit["iso"] = (t.get("addr:country") or "").strip().upper() or None
     return uit
@@ -848,12 +942,22 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel, niet_achtbaa
         if o["q"] in park_qs:
             o["q"] = None
 
-    # 1. Via de wikidata-tag, als het object niet ver van de Wikidata-plek ligt
+    # 1a. Via de OSM-code die Wikidata zelf bij de baan noemt (P10689, P11693)
+    per_osm = {i: a for a in wd for i in a.get("_osm_wd", ())}
+    for o in osm:
+        a = per_osm.get(o["id"])
+        if a:
+            a.setdefault("_osm", []).append(o)
+            naar_doel[o["id"]] = a["id"]
+            tel["osm_via_wikidata"] += 1
+
+    # 1b. Via de wikidata-tag, als het object niet ver van de Wikidata-plek ligt.
+    #     Bij een verhuisde baan klopt de plek in Wikidata vaak nog niet: dan geen controle.
     for o in osm:
         a = per_q.get(o["q"])
-        if not a:
+        if not a or o["id"] in naar_doel:
             continue
-        if a.get("lat") is not None and afstand(o["lat"], o["lon"], a["lat"], a["lon"]) > TAG_AFSTAND:
+        if a.get("lat") is not None and not a.get("_vorige") and afstand(o["lat"], o["lon"], a["lat"], a["lon"]) > TAG_AFSTAND:
             tel["osm_tag_te_ver"] += 1
             continue
         a.setdefault("_osm", []).append(o)
@@ -905,22 +1009,24 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel, niet_achtbaa
         a["osm"] = osm_pad(eerste["id"])
         a["_osm_ids"] = [o["id"] for o in groep]
         a["_osm_fotos"] = osm_fotos(groep)
-        if a.get("lat") is None:
+        if a.get("lat") is None or a.get("_vorige"):
             a["lat"], a["lon"] = round(eerste["lat"], 5), round(eerste["lon"], 5)
             tel["wd_plek_uit_osm"] += 1
         p = eerste["park"]
         if p and not a.get("_park_zeker"):
             a["park"] = park_naam(p)
             a["parkId"] = p["qid"] or p["id"]
+            a["_park_bron"] = "osm"
             tel["wd_park_uit_osm"] += 1
         w = osm_waarden(groep)
-        for veld in ("hoogte", "rcdb", "geopend", "fabrikant"):
-            if a.get(veld) is None and w.get(veld) is not None:
-                a[veld] = w[veld]
+        a["_w"]["osm"] = {k: w[k] for k in ("hoogte", "lengte", "geopend", "fabrikant", "type") if w.get(k) is not None}
+        if a.get("rcdb") is None and w.get("rcdb"):
+            a["rcdb"] = w["rcdb"]
         if not a.get("land"):
-            land = land_van(eerste, w.get("iso"))
+            land = norm.land(land_van(eerste, w.get("iso")))
             if land:
                 a["land"] = land
+                a["_land_bron"] = "osm"
         # Twee of meer OSM-sporen met elk een eigen naam bij één Wikidata-baan
         # (zoals "Winja's Fear" en "Winja's Force"): voorstel om te splitsen
         eigen = {volle_sleutel(n) for n in a["_namen"]}
@@ -976,7 +1082,7 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel, niet_achtbaa
         eerste, baan = groep[0], banen[0]
         w = osm_waarden(groep)
         p = baan["park"] or eerste["park"]
-        bewijs = w.get("rcdb") or any(
+        bewijs = w.get("rcdb") or any(o.get("alpine") for o in groep) or any(
             o["tags"].get("roller_coaster") == "track" or o["tags"].get(k)
             for o in groep for k in ("roller_coaster:type", "manufacturer", "height", "length", "opening_date", "start_date"))
         if not p and not bewijs:
@@ -997,18 +1103,19 @@ def voeg_osm_samen(wd, osm, vorige_lijst, park_naam, land_van, tel, niet_achtbaa
                     tel["osm_id_hergebruikt"] += 1
                     break
         geopend = w.get("geopend")
+        pnaam = park_naam(p) if p else None
+        schone_naam, bijna = norm.naam(baan["naam"], pnaam)
         a = {
             "id": nieuwe_id,
-            "naam": baan["naam"],
-            "park": park_naam(p) if p else None,
+            "naam": schone_naam,
+            "park": pnaam,
             "parkId": (p["qid"] or p["id"]) if p else None,
-            "land": land_van(baan, w.get("iso")),
-            "type": w.get("type") or "Achtbaan",
-            "fabrikant": w.get("fabrikant"),
-            "status": "gepland" if geopend and geopend > dit_jaar else "open",
-            "geopend": geopend,
-            "hoogte": w.get("hoogte"),
-            "lengte": w.get("lengte"),
+            "land": norm.land(land_van(baan, w.get("iso"))),
+            "_w": {"osm": {k: v for k, v in {
+                "type": w.get("type"), "fabrikant": w.get("fabrikant"), "geopend": geopend,
+                "hoogte": w.get("hoogte"), "lengte": w.get("lengte"),
+                "status": "gepland" if bijna or (geopend and geopend > dit_jaar) else None,
+            }.items() if v is not None}},
             "lat": round(baan["lat"], 5),
             "lon": round(baan["lon"], 5),
             "rcdb": w.get("rcdb"),
@@ -1086,6 +1193,309 @@ def zoek_dubbel_extra(alle, extra, tel):
                 print(f"  extra.json: {x['id']} ({x['naam']}) staat nu ook in de bronnen als {a['id']}")
                 break
     return aliassen
+
+
+# ---------------------------------------------------------------------------
+# Wikipedia: het informatieblok van het artikel (Engels, Nederlands, Duits)
+# ---------------------------------------------------------------------------
+
+WP_TALEN = ("en", "nl", "de")
+
+
+def oude_waarden(a, bron):
+    """De waarden van de vorige keer die uit deze bron kwamen (als die bron nu niet lukt)."""
+    if a.get("bron"):
+        return {v: a[v] for v, b in a["bron"].items() if b == bron and v in FEITEN and a.get(v) is not None}
+    if bron != "osm":
+        return {}
+    # Ouder bestand zonder bronnen: alleen wat niet de standaardwaarde is
+    uit = {v: a.get(v) for v in ("hoogte", "lengte", "geopend", "fabrikant", "type", "status") if a.get(v) is not None}
+    if uit.get("type") == "Achtbaan":
+        del uit["type"]
+    if uit.get("status") == "open":
+        del uit["status"]
+    return uit
+
+
+def lees_wikipedia(alle, artikelen, vorige_per_id, tel):
+    """Zet per baan de waarden uit het informatieblok in a['_w']['wp:<taal>']. Per taal
+    één verzoek per 50 artikelen, en alleen het begin van het artikel (daar staat het blok)."""
+    print("Wikipedia: informatieblokken lezen…")
+    per_taal = defaultdict(lambda: defaultdict(list))
+    for a in alle:
+        titels = (artikelen or {}).get(a["id"], {})
+        links = {t: titels[t] for t in WP_TALEN if titels.get(t)}
+        if links:
+            a["wp"] = links
+        for taal, titel in links.items():
+            per_taal[taal][titel].append(a)
+    gelukt = set()
+    for taal in WP_TALEN:
+        titels = per_taal.get(taal, {})
+        if artikelen is None:
+            break
+        try:
+            for i, stuk in enumerate(in_stukjes(sorted(titels), 50), 1):
+                data = mediawiki(f"https://{taal}.wikipedia.org/w/api.php", {
+                    "action": "query", "prop": "revisions", "rvprop": "content", "rvslots": "main",
+                    "rvsection": "0", "redirects": "1", "titles": "|".join(stuk),
+                })
+                query = data.get("query", {})
+                terug = {t: t for t in stuk}
+                for soort in ("normalized", "redirects"):
+                    for n in query.get(soort, []):
+                        terug[n["to"]] = terug.get(n["from"], n["from"])
+                for pagina in query.get("pages", []):
+                    rev = (pagina.get("revisions") or [{}])[0]
+                    tekst = ((rev.get("slots") or {}).get("main") or {}).get("content") or ""
+                    for a in titels.get(terug.get(pagina.get("title"), pagina.get("title")), []):
+                        info = wp.lees_infobox(tekst, taal, [a.get("park")] if a.get("park") else [])
+                        if info:
+                            a["_w"][f"wp:{taal}"] = info
+                            tel[f"wp_{taal}_infobox"] += 1
+                time.sleep(1)
+            gelukt.add(taal)
+            print(f"  {taal}: {len(titels)} artikelen, {tel[f'wp_{taal}_infobox']} met een informatieblok")
+        except Exception as e:  # noqa: BLE001
+            print(f"  Wikipedia ({taal}) lukt niet: {e}. De waarden van de vorige keer blijven.")
+    for taal in WP_TALEN:
+        if taal in gelukt:
+            continue
+        for a in alle:
+            oud = oude_waarden(vorige_per_id.get(a["id"], {}), f"wp:{taal}")
+            if oud and "_w" in a:
+                a["_w"][f"wp:{taal}"] = oud
+                if vorige_per_id[a["id"]].get("wp"):
+                    a.setdefault("wp", vorige_per_id[a["id"]]["wp"])
+
+
+def wp_volgorde(land):
+    """Welke Wikipedia eerst: bij een Nederlandse of Belgische baan de Nederlandse, enzovoort."""
+    if land in ("Nederland", "België"):
+        return ("nl", "en", "de")
+    if land in ("Duitsland", "Oostenrijk", "Zwitserland"):
+        return ("de", "en", "nl")
+    return ("en", "nl", "de")
+
+
+def maak_park_index(alle):
+    """Parknaam -> (naam, parkId), alleen als de naam maar bij één park hoort."""
+    index = {}
+    for a in alle:
+        if a.get("park") and a.get("parkId"):
+            k = norm.sleutel(a["park"])
+            if k in index and index[k] and index[k][1] != a["parkId"]:
+                index[k] = None
+            elif k not in index:
+                index[k] = (a["park"], a["parkId"])
+    return {k: v for k, v in index.items() if v}
+
+
+def kies_waarden(a, park_index, tel):
+    """Per veld de waarde van de eerste bron die er een heeft: Wikidata, dan Wikipedia,
+    dan OpenStreetMap. Onmogelijke waarden vallen weg. In a['bron'] staat per veld waar
+    de waarde vandaan komt. (Jouw eigen aanvullingen legt de site er nog overheen.)"""
+    w = a.pop("_w", None)
+    if w is None:
+        return  # al eerder gekozen, bijvoorbeeld een baan van de vorige keer
+    dit_jaar = datetime.date.today().year
+    volgorde = ["wd"] + [f"wp:{t}" for t in wp_volgorde(a.get("land"))] + ["osm"]
+    bronnen = [(b, w[b]) for b in volgorde if w.get(b)]
+    bron = {}
+    for veld in FEITEN:
+        a.pop(veld, None)
+    a["naam"] = norm.naam(a["naam"], a.get("park"))[0]
+    if a.get("land"):
+        a["land"] = norm.land(a["land"])
+
+    for veld in ("hoogte", "valhoogte", "lengte", "snelheid", "inversies", "duur"):
+        for b, waarden in bronnen:
+            if waarden.get(veld) is None:
+                continue
+            n = norm.getal(veld, waarden[veld])
+            if n is None:
+                tel[f"afgekeurd_{veld}"] += 1
+                continue
+            a[veld], bron[veld] = n, b
+            break
+    for veld in ("geopend", "gesloten"):
+        for b, waarden in bronnen:
+            j = norm.jaar(veld, waarden.get(veld))
+            if j:
+                a[veld], bron[veld] = j, b
+                break
+    for b, waarden in bronnen:
+        if waarden.get("status"):
+            a["status"], bron["status"] = waarden["status"], b
+            break
+    else:
+        if a.get("gesloten"):
+            a["status"], bron["status"] = "gesloten", bron["gesloten"]
+        elif a.get("geopend") and a["geopend"] > dit_jaar:
+            a["status"], bron["status"] = "gepland", bron["geopend"]
+        else:
+            a["status"] = "open"
+    if a["status"] == "open" and a.get("gesloten"):
+        # Een sluiting bij een open baan hoort bij een oude naam of een oud spoor
+        a.pop("gesloten")
+        bron.pop("gesloten", None)
+    for b, waarden in bronnen:
+        f = norm.fabrikant(waarden.get("fabrikant"))
+        if f:
+            a["fabrikant"], bron["fabrikant"] = f, b
+            break
+    for b, waarden in bronnen:
+        m = re.sub(r"\s+", " ", str(waarden.get("model") or "")).strip()
+        if m:
+            a["model"], bron["model"] = m[:80], b
+            break
+    teksten = [(b, waarden["type"]) for b, waarden in bronnen if waarden.get("type")]
+    teksten += [(b, waarden["model"]) for b, waarden in bronnen if waarden.get("model")]
+    a["type"], b = norm.kies_type(teksten)
+    if b:
+        bron["type"] = b
+    for veld in norm.samen_onmogelijk(a):
+        a.pop(veld, None)
+        bron.pop(veld, None)
+        tel[f"afgekeurd_{veld}"] += 1
+
+    # Geen park uit Wikidata of OpenStreetMap? Dan uit Wikipedia: met de code van een bekend
+    # park als de naam overeenkomt, anders alleen de naam.
+    if not a.get("park"):
+        for b, waarden in bronnen:
+            if b.startswith("wp:") and waarden.get("park") and len(waarden["park"]) <= 80:
+                p = park_index.get(norm.sleutel(waarden["park"]))
+                a["park"], a["parkId"] = p if p else (waarden["park"], None)
+                if not a["parkId"]:
+                    del a["parkId"]
+                bron["park"] = b
+                tel["park_uit_wikipedia"] += 1
+                break
+    if a.get("park"):
+        bron.setdefault("park", a.pop("_park_bron", None) or ("osm" if str(a.get("parkId", "")).startswith("osm-") else "wd"))
+    if a.get("land"):
+        bron["land"] = a.pop("_land_bron", None) or ("wd" if "wd" in w else "osm")
+
+    # Vorige parken (verhuisde banen): Wikidata, anders Wikipedia
+    vorige = a.pop("_vorige", None)
+    if not vorige:
+        for b, waarden in bronnen:
+            if b.startswith("wp:") and waarden.get("vorigeParken"):
+                vorige = []
+                for v in waarden["vorigeParken"]:
+                    p = park_index.get(norm.sleutel(v["park"]))
+                    vorige.append({"park": p[0] if p else v["park"], "parkId": p[1] if p else None, "van": v.get("van"), "tot": v.get("tot")})
+                bron["vorigeParken"] = b
+                break
+    elif "wd" in w:
+        bron["vorigeParken"] = "wd"
+    if vorige:
+        a["vorigeParken"] = [{k: v for k, v in x.items() if v} for x in vorige
+                             if x.get("park") and x.get("parkId") != a.get("parkId")] or None
+        if not a["vorigeParken"]:
+            del a["vorigeParken"]
+            bron.pop("vorigeParken", None)
+    for b in bron.values():
+        tel[f"bron_{b}"] += 1
+    a["bron"] = bron
+
+
+def voeg_parken_samen(alle, tel):
+    """Hetzelfde park met twee codes (Wikidata en OpenStreetMap, of twee keer OSM) wordt één
+    park: met de Wikidata-code en -naam als die er is. Alleen als de banen dicht bij elkaar
+    liggen; 'Disneyland Park' in Anaheim en in Parijs blijven dus twee parken.
+    Geeft {oude parkId: nieuwe parkId}, zodat oude links blijven werken."""
+    per_park = defaultdict(list)
+    for a in alle:
+        if a.get("parkId") and a.get("park"):
+            per_park[a["parkId"]].append(a)
+    info = []
+    for pid, banen in per_park.items():
+        met = [b for b in banen if b.get("lat") is not None]
+        info.append({
+            "id": pid, "naam": banen[0]["park"], "n": len(banen),
+            "lat": sum(b["lat"] for b in met) / len(met) if met else None,
+            "lon": sum(b["lon"] for b in met) / len(met) if met else None,
+        })
+    per_naam = defaultdict(list)
+    for p in info:
+        per_naam[norm.sleutel(p["naam"])].append(p)
+    vervang = {}
+    for lijst in per_naam.values():
+        if len(lijst) < 2:
+            continue
+        lijst.sort(key=lambda p: (not p["id"].startswith("Q"), -p["n"], p["id"]))
+        for i, houd in enumerate(lijst):
+            if houd["id"] in vervang:
+                continue
+            for p in lijst[i + 1:]:
+                if p["id"] in vervang or p["id"].startswith("Q") or houd["lat"] is None or p["lat"] is None:
+                    continue  # twee Wikidata-parken met dezelfde naam blijven apart
+                if afstand(houd["lat"], houd["lon"], p["lat"], p["lon"]) <= 3000:
+                    vervang[p["id"]] = houd
+    for a in alle:
+        p = vervang.get(a.get("parkId"))
+        if p:
+            a["parkId"], a["park"] = p["id"], p["naam"]
+            tel["banen_in_samengevoegd_park"] += 1
+    for oud in vervang:
+        print(f"  park {oud} hoort bij {vervang[oud]['naam']} ({vervang[oud]['id']})")
+    tel["parken_samengevoegd"] = len(vervang)
+    # Ook elk park één naam: de naam die het vaakst voorkomt
+    per_id = defaultdict(lambda: defaultdict(int))
+    for a in alle:
+        if a.get("parkId") and a.get("park"):
+            per_id[a["parkId"]][a["park"]] += 1
+    for a in alle:
+        namen = per_id.get(a.get("parkId"))
+        if namen:
+            a["park"] = max(namen.items(), key=lambda x: (x[1], x[0]))[0]
+    return {oud: p["id"] for oud, p in vervang.items()}
+
+
+ALGEMENE_NAAM = {"achtbaan", "rollercoaster", "coaster", "kiddiecoaster", "familycoaster", "kinderachtbaan",
+                 "juniorcoaster", "familieachtbaan", "achterbahn", "kinderachterbahn", "minicoaster"}
+
+
+def voeg_dubbele_banen_samen(alle, niet, tel):
+    """Twee keer dezelfde baan in hetzelfde park (zelfde naam), bijvoorbeeld een Wikidata-item
+    en een OSM-object die niet aan elkaar gekoppeld waren, of twee Wikidata-items. De baan
+    met de meeste gegevens blijft; de andere wordt een verwijzing (credits blijven gelden).
+    Niet samen: banen met een algemene naam, of waarvan de jaartallen niet passen
+    (een oude en een nieuwe baan met dezelfde naam)."""
+    per = defaultdict(list)
+    for a in alle:
+        k = norm.sleutel(a["naam"])
+        if a.get("parkId") and len(k) >= 4 and k not in ALGEMENE_NAAM and a["id"] not in niet:
+            per[(a["parkId"], k)].append(a)
+
+    def botst(x, y):
+        if x.get("geopend") and y.get("geopend") and abs(x["geopend"] - y["geopend"]) > 1:
+            return True
+        if {x.get("status"), y.get("status")} == {"open", "gesloten"}:
+            return True
+        return False
+
+    weg = {}
+    for banen in per.values():
+        if len(banen) < 2:
+            continue
+        banen.sort(key=lambda a: (not a["id"].startswith("Q"), -len([v for v in a.values() if v is not None]),
+                                  int(a["id"][1:]) if re.fullmatch(r"Q\d+", a["id"]) else 0))
+        houd = banen[0]
+        for b in banen[1:]:
+            if botst(houd, b):
+                continue
+            for veld, waarde in b.items():
+                if veld != "id" and houd.get(veld) is None and waarde is not None:
+                    houd[veld] = waarde
+                    if veld in FEITEN and b.get("bron", {}).get(veld):
+                        houd.setdefault("bron", {})[veld] = b["bron"][veld]
+            weg[b["id"]] = houd["id"]
+            print(f"  dubbel: {b['naam']} ({b['id']}) is dezelfde baan als {houd['id']}")
+    alle[:] = [a for a in alle if a["id"] not in weg]
+    tel["banen_dubbel_samengevoegd"] = len(weg)
+    return weg
 
 
 # ---------------------------------------------------------------------------
@@ -1271,7 +1681,7 @@ PARK_ALGEMEEN = {
     "amusement", "resort", "world", "land", "the", "fun", "family", "adventure", "adventures", "kingdom",
     "erlebnispark", "lunapark", "luna", "parks", "flags", "studios", "town", "city", "village", "garden", "gardens",
 }
-ZOEK_TOTAAL = 12 * 60  # seconden: zoeken op Commons stopt daarna, de rest volgende keer
+ZOEK_TOTAAL = int(os.environ.get("ACHTBANEN_ZOEKTIJD", 12 * 60))  # seconden: zoeken op Commons stopt daarna, de rest volgende keer
 
 
 def woorden(tekst):
@@ -1334,20 +1744,17 @@ def controleer_licenties(bestanden):
     return goed
 
 
-def zoek_fotos(alle, wd_ids, vorige_per_id, tel):
+def zoek_fotos(alle, wd_ids, vorige_per_id, tel, categorieen=None, artikelen=None):
     print("Foto's zoeken…")
     bronnen = {a["id"]: [] for a in alle}
     for a in alle:
         if a.get("foto"):
             bronnen[a["id"]].append(("p18" if a["id"] in wd_ids else "vorige", a["foto"]))
-    fout = False
+    fout = categorieen is None or artikelen is None
 
-    zonder = [a["id"] for a in alle if a["id"] in wd_ids and not a.get("foto")]
-    try:
-        categorieen, artikelen = haal_wd_fotobronnen(zonder) if zonder else ({}, {})
-    except Exception as e:  # noqa: BLE001
-        print(f"  Commons-categorieën en artikelen niet opgehaald: {e}")
-        categorieen, artikelen, fout = {}, {}, True
+    zonder = {a["id"] for a in alle if a["id"] in wd_ids and not a.get("foto")}
+    categorieen = {q: c for q, c in (categorieen or {}).items() if q in zonder}
+    artikelen = {q: t for q, t in (artikelen or {}).items() if q in zonder}
     print(f"  {len(zonder)} Wikidata-banen zonder P18: {len(categorieen)} met een Commons-categorie, {len(artikelen)} met een Wikipedia-artikel")
 
     def uit_categorie(aid, categorie, bron):
@@ -1494,7 +1901,7 @@ def bouw(vorige, tel):
         if isinstance(regel, dict) and regel.get("id") and isinstance(regel.get("sporen"), list) and len(regel["sporen"]) >= 2:
             splitsen[regel["id"]] = [str(n) for n in regel["sporen"]]
 
-    basis, cijfers, wd_parken, nodig = bouw_wikidata()
+    basis, cijfers, wd_extra, wd_plekken, wd_parken, nodig = bouw_wikidata()
 
     print("4/5 Achtbanen en pretparken ophalen bij OpenStreetMap…")
     try:
@@ -1536,7 +1943,7 @@ def bouw(vorige, tel):
     print(f"5/5 Namen ophalen voor {len(alle_q)} onderwerpen…")
     naam, alle_namen = haal_namen(alle_q)
 
-    wd = maak_wikidata_lijst(basis, cijfers, wd_parken, naam, alle_namen)
+    wd = maak_wikidata_lijst(basis, cijfers, wd_extra, wd_plekken, wd_parken, naam, alle_namen)
     for a in wd:
         if a["id"] in splitsen:  # OSM-sporen met deze namen horen bij deze baan
             a["_namen"] = a["_namen"] | set(splitsen[a["id"]])
@@ -1580,25 +1987,46 @@ def bouw(vorige, tel):
                 continue
             if VR.search(a["naam"]):
                 osm_vr.append(a)
-            elif geen_achtbaan(a["naam"], {}) or (is_station(a["naam"], {}) and not zonder_station(a["naam"])):
+            elif (geen_achtbaan(a["naam"], {}) not in (None, "zomerrodelbaan")
+                  or (is_station(a["naam"], {}) and not zonder_station(a["naam"]))):
                 tel["osm_geen_achtbaan_vorige_keer"] += 1
-            elif not a.get("park") and not any(a.get(k) for k in ("rcdb", "hoogte", "lengte", "fabrikant", "geopend")) \
-                    and a.get("type", "Achtbaan") == "Achtbaan":
-                tel["osm_buiten_park"] += 1
             else:
+                # De vorige keer is al gekeken of het een achtbaan is (met de tags uit OSM,
+                # die er nu niet zijn): wat toen bleef, blijft nu ook.
+                a = dict(a)
+                a["_w"] = {"osm": oude_waarden(a, "osm")}
                 nieuw.append(a)
         for a in wd:
             oud = vorige_per_id.get(a["id"])
             if oud and oud.get("osm"):
-                for veld in ("osm", "lat", "lon", "park", "parkId", "land", "hoogte", "rcdb", "geopend", "fabrikant"):
+                for veld in ("osm", "lat", "lon", "park", "parkId", "land", "rcdb"):
                     if a.get(veld) is None and oud.get(veld) is not None:
                         a[veld] = oud[veld]
                 if not a.get("_park_zeker") and oud.get("park"):
                     a["park"], a["parkId"] = oud["park"], oud.get("parkId")
+                a["_w"]["osm"] = oude_waarden(oud, "osm")
         tel["osm_vorige_keer"] = len(nieuw)
         print(f"  De {len(nieuw)} achtbanen uit OpenStreetMap van de vorige keer blijven staan.")
     tel["osm_nieuw"] = len(nieuw) if elementen is not None else 0
     alle = wd + nieuw
+
+    # Wikipedia: links naar de artikelen, en het informatieblok van het Engelse,
+    # Nederlandse en Duitse artikel
+    wd_ids = {a["id"] for a in wd}
+    try:
+        categorieen, artikelen = haal_wd_fotobronnen(sorted(wd_ids))
+    except Exception as e:  # noqa: BLE001
+        print(f"  Commons-categorieën en artikelen niet opgehaald: {e}")
+        categorieen, artikelen = None, None
+    lees_wikipedia(alle, artikelen, vorige_per_id, tel)
+
+    # Per veld de beste waarde kiezen (jouw aanvullingen komen er op de site nog bovenop)
+    park_index = maak_park_index(alle)
+    for a in alle:
+        kies_waarden(a, park_index, tel)
+    park_aliassen = voeg_parken_samen(alle, tel)
+    dubbel = voeg_dubbele_banen_samen(alle, set(splitsen), tel)
+    naar_doel.update(dubbel)
 
     # VR-versies horen bij de echte baan: je rit op een VR-versie telt voor die baan
     vr_doel = voeg_vr_samen(osm_vr + wd_vr, alle, tel)
@@ -1621,6 +2049,7 @@ def bouw(vorige, tel):
         if oud in naar_doel and naar_doel[oud] in nieuwe_ids:
             aliassen[oud] = naar_doel[oud]
     aliassen.update({k: v for k, v in vr_doel.items() if v in nieuwe_ids})
+    aliassen.update({k: v for k, v in dubbel.items() if v in nieuwe_ids})
     aliassen.update(zoek_dubbel_extra(alle, extra, tel))
 
     # Credits mogen nooit verdwijnen: staat een id uit gereden.json of uit de ritten
@@ -1641,7 +2070,7 @@ def bouw(vorige, tel):
         else:
             print(f"  Let op: {i} uit de ritten is onbekend")
 
-    zoek_fotos(alle, {a["id"] for a in wd}, vorige_per_id, tel)
+    zoek_fotos(alle, wd_ids, vorige_per_id, tel, categorieen, artikelen)
 
     for a in alle:
         for k in [k for k in a if k.startswith("_")]:
@@ -1652,52 +2081,57 @@ def bouw(vorige, tel):
                                   + tel["osm_dubbel_binnen_osm"] + tel["dubbel_met_extra"] + tel["vr_samengevoegd"])
     tel["geen_achtbaan_weggehaald"] = (sum(v for k, v in tel.items() if k.startswith("osm_geen_"))
                                        + tel["osm_alleen_station"] + tel["osm_buiten_park"] + tel["vr_weg"])
-    return alle, aliassen, voorstellen
+    return alle, aliassen, voorstellen, park_aliassen
 
 
 def per_naam(lijst, q):
     return next((a["naam"] for a in lijst if a["id"] == q), q)
 
 
-# Velden die alleen de attractiepagina gebruikt; gaan naar details.json als het
-# hoofdbestand te groot wordt.
-DETAILVELDEN = ("duur", "rcdb", "osm", "wikidata")
+# Velden die de lijst, de filters, de kaartjes en de kaart nodig hebben. De rest (bronnen,
+# Wikipedia-links, vorige parken, ...) staat in data/details/, verdeeld over kleine
+# bestanden: de attractiepagina haalt alleen het stuk op waar die baan in staat.
+LIJSTVELDEN = ("id", "naam", "park", "parkId", "land", "type", "fabrikant", "status", "geopend", "gesloten",
+               "hoogte", "snelheid", "lengte", "inversies", "foto", "fotoInfo", "lat", "lon")
+DETAILMAP = MAP / "data" / "details"
+DETAILDELEN = 16
 
 
-def schrijf(achtbanen, aliassen, tel, voorstellen=None):
+def detaildeel(achtbaan_id):
+    """In welk stuk staan de details? (De site rekent precies zo.)"""
+    return sum(ord(c) for c in achtbaan_id) % DETAILDELEN
+
+
+def schrijf(achtbanen, aliassen, tel, voorstellen=None, park_aliassen=None):
     UITVOER.parent.mkdir(parents=True, exist_ok=True)
     kop = {
         "bijgewerkt": datetime.date.today().isoformat(),
-        "bron": "Wikidata (CC0) en OpenStreetMap (© OpenStreetMap-bijdragers, ODbL); foto's via Wikimedia Commons",
+        "bron": "Wikidata (CC0), Wikipedia (CC BY-SA, alleen feiten uit het informatieblok) en OpenStreetMap (© OpenStreetMap-bijdragers, ODbL); foto's via Wikimedia Commons",
         "licentie": "Dit bestand bevat gegevens uit OpenStreetMap en valt onder de Open Database License (ODbL) 1.0: https://opendatacommons.org/licenses/odbl/1-0/",
         "aantal": len(achtbanen),
         "telling": {k: v for k, v in sorted(tel.items()) if v},
         "aliassen": dict(sorted(aliassen.items())),
+        # Parken die samengevoegd zijn: oude parkcode -> nieuwe, zodat oude links blijven werken
+        "parkAliassen": dict(sorted((park_aliassen or {}).items())),
         # Banen waar OpenStreetMap meer sporen met een eigen naam ziet; in beheer kun je ze splitsen
         "splitsvoorstellen": dict(sorted((voorstellen or {}).items())),
+        "details": {"map": "data/details", "delen": DETAILDELEN},
     }
+    kort, details = [], [dict() for _ in range(DETAILDELEN)]
+    for a in achtbanen:
+        kort.append({k: a[k] for k in LIJSTVELDEN if a.get(k) is not None})
+        d = {k: v for k, v in a.items() if k not in LIJSTVELDEN and v is not None}
+        if d:
+            details[detaildeel(a["id"])][a["id"]] = d
 
-    def tekst_van(kop, lijst):
-        regels = ",\n".join(json.dumps(a, ensure_ascii=False) for a in lijst)
-        t = json.dumps(kop, ensure_ascii=False)[:-1] + ',\n"achtbanen": [\n' + regels + "\n]}\n"
-        json.loads(t)  # controle: is het geldige JSON?
-        return t
-
-    tekst = tekst_van(kop, achtbanen)
-    if len(tekst.encode("utf-8")) > MAX_GROOTTE:
-        details = {}
-        kort = []
-        for a in achtbanen:
-            d = {k: a[k] for k in DETAILVELDEN if k in a}
-            if d:
-                details[a["id"]] = d
-            kort.append({k: v for k, v in a.items() if k not in DETAILVELDEN})
-        kop["details"] = "data/details.json"
-        tekst = tekst_van(kop, kort)
-        DETAILS.write_text(json.dumps(details, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
-        print(f"  Het bestand werd groter dan {MAX_GROOTTE / 1e6:.1f} MB: {', '.join(DETAILVELDEN)} staan nu in {DETAILS.name}")
-    elif DETAILS.exists():
-        DETAILS.unlink()
+    regels = ",\n".join(json.dumps(a, ensure_ascii=False, separators=(",", ":")) for a in kort)
+    tekst = json.dumps(kop, ensure_ascii=False)[:-1] + ',\n"achtbanen": [\n' + regels + "\n]}\n"
+    json.loads(tekst)  # controle: is het geldige JSON?
+    DETAILMAP.mkdir(parents=True, exist_ok=True)
+    for i, deel in enumerate(details):
+        (DETAILMAP / f"{i}.json").write_text(json.dumps(deel, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n", encoding="utf-8")
+    if DETAILS.exists():
+        DETAILS.unlink()  # het oude details.json in één stuk
     UITVOER.write_text(tekst, encoding="utf-8")
     return len(tekst.encode("utf-8"))
 
@@ -1744,12 +2178,18 @@ def samenvatting(tel, grootte):
 
 
 def lees_vorige():
-    """De lijst van de vorige keer, met de velden uit details.json er weer bij."""
+    """De lijst van de vorige keer, met de details er weer bij."""
     vorige = lees_json(UITVOER)
-    if vorige and vorige.get("details"):
-        details = lees_json(DETAILS) or {}
-        for a in vorige.get("achtbanen", []):
-            a.update(details.get(a["id"], {}))
+    if not vorige:
+        return vorige
+    details = {}
+    if isinstance(vorige.get("details"), dict):
+        for i in range(int(vorige["details"].get("delen") or 0)):
+            details.update(lees_json(DETAILMAP / f"{i}.json") or {})
+    elif vorige.get("details"):
+        details = lees_json(DETAILS) or {}  # ouder bestand: alles in één details.json
+    for a in vorige.get("achtbanen", []):
+        a.update(details.get(a["id"], {}))
     return vorige
 
 
@@ -1761,7 +2201,7 @@ def main():
     vorig_aantal = (vorige or {}).get("aantal", 0)
     tel = defaultdict(int)
     try:
-        achtbanen, aliassen, voorstellen = bouw(vorige, tel)
+        achtbanen, aliassen, voorstellen, park_aliassen = bouw(vorige, tel)
     except Exception as fout:  # noqa: BLE001
         print(f"\n✗ Ophalen mislukt: {fout}")
         if vorig_aantal:
@@ -1775,7 +2215,9 @@ def main():
         return 0
 
     tel["met_foto"] = sum(1 for a in achtbanen if a.get("foto"))
-    grootte = schrijf(achtbanen, aliassen, tel, voorstellen)
+    # Vorige park-verwijzingen blijven ook gelden
+    park_aliassen = {**((vorige or {}).get("parkAliassen") or {}), **park_aliassen}
+    grootte = schrijf(achtbanen, aliassen, tel, voorstellen, park_aliassen)
     print(f"\n✓ {len(achtbanen)} achtbanen opgeslagen in {UITVOER.relative_to(MAP)}")
     samenvatting(tel, grootte)
     if os.environ.get("ACHTBANEN_UITLEG") == "1":

@@ -393,13 +393,14 @@
   let geladen = null;
   function laadAlles() {
     geladen = geladen || (async () => {
-      const [basis, extra, mijn, splitsBestand, verborgenBestand, fotoBestand] = await Promise.all([
+      const [basis, extra, mijn, splitsBestand, verborgenBestand, fotoBestand, aanvulBestand] = await Promise.all([
         haalJson("data/achtbanen.json", true),
         laadEigen("data/extra.json"),
         laadEigen("data/gereden.json"),
         laadEigen("data/splitsen.json"),
         laadEigen("data/verborgen.json"),
         laadEigen("data/fotos.json"),
+        laadEigen("data/aanvullingen.json"),
       ]);
       // Verwijzingen: oude ids (bijvoorbeeld een OSM-baan die nu in Wikidata staat, of een
       // regel uit extra.json die nu in de bronnen staat) wijzen naar de achtbaan van nu
@@ -433,10 +434,16 @@
       const perId = new Map(lijst.map((a) => [a.id, a]));
       for (const [id, sporen] of sporenVan) if (!perId.has(id) && perId.has(sporen[0].id)) perId.set(id, sporen[0]);
       for (const [oud, nieuw] of Object.entries(aliassen)) if (!perId.has(oud) && perId.has(nieuw)) perId.set(oud, perId.get(nieuw));
+      // Je eigen aanvullingen (data/aanvullingen.json) gaan voor op alle bronnen
+      const aanvullingen = new Map(((aanvulBestand && aanvulBestand.aanvullingen) || []).filter((x) => x && x.id).map((x) => [x.id, x]));
+      const doelVan = (id) => sporenVan.get(id) || [perId.get(id) || verborgenBanen.get(id)].filter(Boolean);
+      for (const [id, x] of aanvullingen) for (const a of doelVan(id)) zetAanvulling(a, x);
       for (const a of lijst) a._zoek = zoekbaar([a.naam, a.heleNaam, a.park, a.land, a.fabrikant, a.type].join(" "));
       const data = {
         lijst, perId, aliassen, sporenVan, verborgen, verborgenBanen, echteIds: new Set(lijst.map((a) => a.id)),
         voorstellen: basis.splitsvoorstellen || {},
+        aanvullingen, aanvulDoel: doelVan,
+        parkAliassen: basis.parkAliassen || {},
         bijgewerkt: basis.bijgewerkt, details: basis.details, extra: (extra && extra.achtbanen) || [],
         // Je credits uit gereden.json: zonder Supabase de echte lijst, met Supabase de reservekopie
         jsonRitten: ((mijn && mijn.gereden) || []).filter((r) => r && r.id),
@@ -491,6 +498,74 @@
     data.jsonRitten = nieuw.gereden;
     if (data.persoon) data.persoon.ritten = nieuw.gereden;
     zetRitten(data, nieuw.gereden);
+  }
+
+  /* ---------- Je eigen aanvullingen (data/aanvullingen.json) ----------
+     Per achtbaan een regel met de velden die je zelf aanvult of verbetert, en een
+     'bron'. Ze gaan voor op Wikidata, Wikipedia en OpenStreetMap. */
+  const TYPES = ["4D-achtbaan", "Aangedreven achtbaan", "Achtbaan", "Alpine coaster", "Bobsleebaan", "Boomerang",
+    "Draaiende achtbaan", "Duikachtbaan", "Familieachtbaan", "Hangende achtbaan", "Houten achtbaan", "Hybride achtbaan",
+    "Hypercoaster", "Indoorachtbaan", "Kinderachtbaan", "Lanceerachtbaan", "Mijntreinachtbaan", "Motorachtbaan",
+    "Omgekeerde achtbaan", "Race-achtbaan", "Shuttleachtbaan", "Single-rail-achtbaan", "Stalen achtbaan",
+    "Staande achtbaan", "Vliegende achtbaan", "Vloerloze achtbaan", "Waterachtbaan", "Wilde muis", "Wing coaster"];
+  // Zelfde grenzen als in het script (scripts/normaliseer.py)
+  const AANVUL_VELDEN = [
+    { veld: "hoogte", label: "Hoogte (m)", soort: "getal", min: 1, max: 200, dec: 1 },
+    { veld: "valhoogte", label: "Valhoogte (m)", soort: "getal", min: 1, max: 200, dec: 1 },
+    { veld: "lengte", label: "Lengte (m)", soort: "getal", min: 10, max: 5000, dec: 0 },
+    { veld: "snelheid", label: "Topsnelheid (km/u)", soort: "getal", min: 5, max: 260, dec: 0 },
+    { veld: "inversies", label: "Inversies", soort: "getal", min: 0, max: 14, dec: 0 },
+    { veld: "duur", label: "Ritduur (seconden)", soort: "getal", min: 10, max: 900, dec: 0 },
+    { veld: "geopend", label: "Geopend (jaar)", soort: "jaar" },
+    { veld: "gesloten", label: "Gesloten (jaar)", soort: "jaar" },
+    { veld: "status", label: "Status", soort: "keuze", opties: [["open", "Open"], ["gesloten", "Gesloten"], ["gepland", "Komt nog"]] },
+    { veld: "type", label: "Type", soort: "keuze", opties: TYPES.map((t) => [t, t]) },
+    { veld: "fabrikant", label: "Fabrikant", soort: "tekst", max: 60, lijst: "fabrikant" },
+    { veld: "model", label: "Model", soort: "tekst", max: 80 },
+    { veld: "park", label: "Park", soort: "tekst", max: 100, lijst: "park" },
+    { veld: "land", label: "Land", soort: "tekst", max: 60, lijst: "land" },
+  ];
+
+  function zetAanvulling(a, x) {
+    a._origineel = a._origineel || { bron: { ...(a.bron || {}) } };
+    a.bron = { ...(a.bron || {}) };
+    for (const { veld } of AANVUL_VELDEN) {
+      if (x[veld] === undefined || x[veld] === null || x[veld] === "") continue;
+      if (!(veld in a._origineel)) a._origineel[veld] = a[veld];
+      a[veld] = x[veld];
+      a.bron[veld] = "eigen";
+    }
+    a.eigenBron = x.bron || "";
+    a._eigen = x;
+  }
+  function herstelAanvulling(a) {
+    if (!a._origineel) return;
+    for (const [veld, w] of Object.entries(a._origineel)) {
+      if (veld === "bron") continue;
+      if (w === undefined) delete a[veld]; else a[veld] = w;
+    }
+    a.bron = a._origineel.bron;
+    delete a._origineel; delete a.eigenBron; delete a._eigen;
+  }
+
+  // De details (bronnen, Wikipedia-links, vorige parken, ...) staan in kleine stukken in
+  // data/details/. Het stuk volgt uit de code van de baan (zelfde som als in het script).
+  async function haalDetails(data, a) {
+    const meta = data.details;
+    const sleutel = a.deelVan || a.id;
+    let alles = null;
+    if (meta && typeof meta === "object" && meta.delen) {
+      const deel = [...sleutel].reduce((s, c) => s + c.charCodeAt(0), 0) % meta.delen;
+      alles = await onthoud(`details:${deel}`, () => haalJson(`${meta.map}/${deel}.json`, false));
+    } else if (typeof meta === "string") {
+      alles = await onthoud("details", () => haalJson(meta, false)); // ouder bestand in één stuk
+    }
+    const d = (alles || {})[sleutel];
+    if (!d) return;
+    const eigen = a._eigen;
+    if (eigen) herstelAanvulling(a);
+    Object.assign(a, d);
+    if (eigen) zetAanvulling(a, eigen);
   }
 
   // Je eigen foto's per achtbaan (data/fotos.json, alleen via beheer). Een foto die nog
@@ -1195,11 +1270,14 @@
 
   /* ---------- Attractiepagina ---------- */
 
-  async function haalWikipedia(qid) {
-    const u1 = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${qid}&props=sitelinks` +
-      `&sitefilter=${encodeURIComponent("nlwiki|enwiki")}&format=json&origin=*`;
-    const links = (await (await fetch(u1)).json()).entities?.[qid]?.sitelinks || {};
-    const keuze = links.nlwiki ? ["nl", links.nlwiki.title] : links.enwiki ? ["en", links.enwiki.title] : null;
+  async function haalWikipedia(qid, bekend) {
+    let keuze = bekend && (bekend.nl ? ["nl", bekend.nl] : bekend.en ? ["en", bekend.en] : null);
+    if (!keuze) {
+      const u1 = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${qid}&props=sitelinks` +
+        `&sitefilter=${encodeURIComponent("nlwiki|enwiki")}&format=json&origin=*`;
+      const links = (await (await fetch(u1)).json()).entities?.[qid]?.sitelinks || {};
+      keuze = links.nlwiki ? ["nl", links.nlwiki.title] : links.enwiki ? ["en", links.enwiki.title] : null;
+    }
     if (!keuze) return null;
     const [taal, titel] = keuze;
     const u2 = `https://${taal}.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1` +
@@ -1227,21 +1305,51 @@
     return m ? `${m}:${String(s).padStart(2, "0")}` : `${s} s`;
   }
 
-  function specsHtml(a) {
-    const rijen = [
-      ["Hoogte", a.hoogte && `${getal(a.hoogte, 1)} m`],
-      ["Topsnelheid", a.snelheid && `${getal(a.snelheid)} km/u`],
-      ["Lengte", a.lengte && `${getal(a.lengte)} m`],
-      ["Ritduur", a.duur && duurTekst(a.duur)],
-      [a.status === "gepland" ? "Opent" : "Geopend", a.geopend],
-      ["Gesloten", a.gesloten],
-      ["Fabrikant", a.fabrikant, true],
-      ["Type", a.type, true],
-    ].filter(([, w]) => w);
-    if (!rijen.length) return "";
-    return `<dl class="specs">${rijen.map(([label, w, tekst]) =>
-      `<div><dt>${label}</dt><dd${tekst ? ' class="tekstwaarde"' : ""}>${esc(w)}</dd></div>`).join("")}</dl>`;
+  /* Bron van een gegeven, klein en met een link naar die bron */
+  const BRON_NAMEN = { wd: "Wikidata", "wp:en": "Engelse Wikipedia", "wp:nl": "Nederlandse Wikipedia", "wp:de": "Duitse Wikipedia", osm: "OpenStreetMap", eigen: "Eigen aanvulling" };
+  const wikiUrl = (taal, titel) => `https://${taal}.wikipedia.org/wiki/${encodeURIComponent(String(titel).replace(/ /g, "_"))}`;
+  const osmPad = (a) => (/^(node|way|relation)\/\d+$/.test(a.osm || "") ? a.osm
+    : /^osm-(node|way|relation)-\d+$/.test(a.id) ? a.id.slice(4).replace("-", "/") : "");
+  function bronLink(a, code) {
+    if (!code) return "";
+    if (code === "eigen") return `<span>${esc(BRON_NAMEN.eigen)}${a.eigenBron ? `: ${esc(a.eigenBron)}` : ""}</span>`;
+    const naam = esc(BRON_NAMEN[code] || code);
+    let url = "";
+    if (code === "wd" && wikidataVan(a)) url = `https://www.wikidata.org/wiki/${wikidataVan(a)}`;
+    else if (code.startsWith("wp:") && a.wp && a.wp[code.slice(3)]) url = wikiUrl(code.slice(3), a.wp[code.slice(3)]);
+    else if (code === "osm" && osmPad(a)) url = `https://www.openstreetmap.org/${osmPad(a)}`;
+    return url ? `<a href="${esc(url)}">${naam}</a>` : naam;
   }
+
+  function specsHtml(a) {
+    const b = a.bron || {};
+    const rijen = [
+      ["Hoogte", a.hoogte && `${getal(a.hoogte, 1)} m`, false, "hoogte"],
+      ["Valhoogte", a.valhoogte && `${getal(a.valhoogte, 1)} m`, false, "valhoogte"],
+      ["Topsnelheid", a.snelheid && `${getal(a.snelheid)} km/u`, false, "snelheid"],
+      ["Lengte", a.lengte && `${getal(a.lengte)} m`, false, "lengte"],
+      ["Inversies", a.inversies != null && getal(a.inversies), false, "inversies"],
+      ["Ritduur", a.duur && duurTekst(a.duur), false, "duur"],
+      [a.status === "gepland" ? "Opent" : "Geopend", a.geopend, false, "geopend"],
+      ["Gesloten", a.gesloten, false, "gesloten"],
+      ["Fabrikant", a.fabrikant, true, "fabrikant"],
+      ["Model", a.model, true, "model"],
+      ["Type", a.type, true, "type"],
+    ].filter(([, w]) => w !== undefined && w !== null && w !== "" && w !== false);
+    if (!rijen.length) return "";
+    return `<dl class="specs">${rijen.map(([label, w, tekst, veld]) =>
+      `<div><dt>${label}</dt><dd${tekst ? ' class="tekstwaarde"' : ""}>${esc(w)}</dd>${b[veld] ? `<dd class="spec-bron">${bronLink(a, b[veld])}</dd>` : ""}</div>`).join("")}</dl>`;
+  }
+
+  // Eerder in een ander park (verhuisde banen)
+  function vorigeParkenHtml(a) {
+    const lijst = (a.vorigeParken || []).filter((p) => p && p.park);
+    if (!lijst.length) return "";
+    const jaren = (p) => (p.van || p.tot ? ` (${p.van || "?"}–${p.tot || "?"})` : "");
+    return `<p class="vorig">Eerder in ${lijst.map((p) => (p.parkId
+      ? `<a href="${esc(parkLink(p.parkId))}">${esc(p.park)}</a>` : esc(p.park)) + esc(jaren(p))).join(", ")}</p>`;
+  }
+  const parkLink = (parkId) => `./?park=${encodeURIComponent(parkId)}#overzicht`;
 
   function ritOmschrijving(x) {
     return [
@@ -1309,7 +1417,26 @@
     const lat = Number(a.lat), lon = Number(a.lon);
     if (osm) links.push(`<a href="https://www.openstreetmap.org/${osm}">OpenStreetMap</a>`);
     else if (a.lat != null && isFinite(lat) && isFinite(lon)) links.push(`<a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}">OpenStreetMap</a>`);
-    return `<section class="blok"><h2>Meer weten</h2><ul class="links">${links.map((l) => `<li>${l}</li>`).join("")}</ul></section>`;
+    for (const [taal, titel] of Object.entries(a.wp || {})) {
+      links.push(`<a href="${esc(wikiUrl(taal, titel))}">${{ nl: "Wikipedia", en: "Engelse Wikipedia", de: "Duitse Wikipedia" }[taal] || "Wikipedia"}</a>`);
+    }
+    // Per bron welke gegevens ervandaan komen
+    const NAMEN = { hoogte: "hoogte", valhoogte: "valhoogte", lengte: "lengte", snelheid: "snelheid", inversies: "inversies", duur: "ritduur",
+      geopend: "opening", gesloten: "sluiting", status: "status", fabrikant: "fabrikant", model: "model", type: "type", park: "park", land: "land", vorigeParken: "vorige parken" };
+    const perBron = new Map();
+    for (const [veld, code] of Object.entries(a.bron || {})) {
+      if (!NAMEN[veld]) continue;
+      if (!perBron.has(code)) perBron.set(code, []);
+      perBron.get(code).push(NAMEN[veld]);
+    }
+    const volgorde = ["eigen", "wd", "wp:nl", "wp:en", "wp:de", "osm"];
+    const regels = [...perBron.entries()].sort((x, y) => volgorde.indexOf(x[0]) - volgorde.indexOf(y[0]))
+      .map(([code, velden]) => `<li><span class="bron-naam">${bronLink(a, code)}</span>: ${esc(velden.join(", "))}</li>`);
+    const wikipedia = Object.values(a.bron || {}).some((c) => String(c).startsWith("wp:"));
+    return `<section class="blok"><h2>Meer weten</h2><ul class="links">${links.map((l) => `<li>${l}</li>`).join("")}</ul>
+      ${regels.length ? `<h3 class="beheer-kop">Waar de gegevens vandaan komen</h3><ul class="bronnen-lijst">${regels.join("")}</ul>
+        ${wikipedia ? '<p class="bron-klein">Gegevens uit Wikipedia vallen onder CC BY-SA. Wikidata is vrij te gebruiken (CC0), OpenStreetMap valt onder de ODbL.</p>' : ""}` : ""}
+    </section>`;
   }
 
   /* ---------- Venster: rit toevoegen of bewerken (alleen beheer) ---------- */
@@ -1665,6 +1792,7 @@
       </div>
       ${voorstel ? `<p>OpenStreetMap ziet hier ${voorstel.length} sporen met een eigen naam: ${voorstel.map(esc).join(", ")}.</p>` : ""}
       <div class="knoppen-rij">
+        <button class="knop knop-licht" type="button" data-aanvullen>${a._eigen ? "Aanvulling bewerken" : "Gegevens aanvullen"}</button>
         ${a.deelVan ? "" : `<button class="knop knop-licht" type="button" data-splits='${voorstel ? esc(JSON.stringify(voorstel)) : ""}'>Splitsen in losse sporen</button>`}
         <button class="knop knop-licht knop-gevaar" type="button" data-verberg>Verbergen</button>
       </div>
@@ -1810,6 +1938,113 @@
     });
   }
 
+  /* ---------- Venster: gegevens aanvullen (alleen beheer) ----------
+     Vul in wat je weet; een leeg vak betekent: gebruik wat de bronnen zeggen.
+     Komt in data/aanvullingen.json, met de bron die je opgeeft. */
+  function openAanvulVenster(a, data, klaar) {
+    const eigen = a._eigen || {};
+    const orig = a._origineel || {};
+    const nuWaarde = (veld) => (veld in orig ? orig[veld] : a[veld]);
+    const nuBron = (veld) => ((a._origineel ? a._origineel.bron : a.bron) || {})[veld];
+    const lijstOpties = (veld) => {
+      const tel = new Map();
+      for (const x of data.lijst) if (x[veld]) tel.set(x[veld], (tel.get(x[veld]) || 0) + 1);
+      return [...tel.entries()].sort((p, q) => q[1] - p[1]).slice(0, 400).map(([w]) => `<option value="${esc(w)}"></option>`).join("");
+    };
+    const veldHtml = (v) => {
+      const huidig = nuWaarde(v.veld);
+      const hint = huidig !== undefined && huidig !== null && huidig !== ""
+        ? `nu: ${huidig}${nuBron(v.veld) ? ` (${BRON_NAMEN[nuBron(v.veld)] || nuBron(v.veld)})` : ""}` : "nu: onbekend";
+      const w = eigen[v.veld] ?? "";
+      let invoer;
+      if (v.soort === "keuze") {
+        invoer = `<select id="av-${v.veld}"><option value="">Zoals de bronnen zeggen</option>${v.opties.map(([k, t]) =>
+          `<option value="${esc(k)}"${String(w) === k ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+      } else if (v.soort === "tekst") {
+        invoer = `<input type="text" id="av-${v.veld}" maxlength="${v.max}" value="${esc(w)}"${v.lijst ? ` list="av-lijst-${v.veld}"` : ""} autocomplete="off">
+          ${v.lijst ? `<datalist id="av-lijst-${v.veld}">${lijstOpties(v.lijst)}</datalist>` : ""}`;
+      } else {
+        invoer = `<input type="text" inputmode="decimal" id="av-${v.veld}" value="${esc(String(w).replace(".", ","))}" autocomplete="off">`;
+      }
+      return `<label>${esc(v.label)} ${invoer}<span class="av-nu">${esc(hint)}</span></label>`;
+    };
+    const d = maakVenster(`Gegevens van ${a.naam}`, `
+      <form method="dialog" class="formulier" id="av-form" novalidate>
+        <p class="klein">Vul alleen in wat je zelf weet of wilt verbeteren. Een leeg vak betekent: gebruik wat Wikidata, Wikipedia of OpenStreetMap zeggen.</p>
+        <div class="av-velden">${AANVUL_VELDEN.map(veldHtml).join("")}</div>
+        <label>Bron (verplicht) <input type="text" id="av-bron" maxlength="200" value="${esc(eigen.bron || "")}" placeholder="Bijvoorbeeld: bordje bij de ingang, juli 2025"></label>
+        <p class="fout" id="av-fout" role="alert"></p>
+        <div class="knoppen">
+          <button class="knop" type="submit" id="av-opslaan">Opslaan</button>
+          <button class="knop knop-licht" type="button" id="av-sluit">Annuleren</button>
+          ${a._eigen ? '<button class="knop knop-licht knop-gevaar" type="button" id="av-weg">Aanvulling weghalen</button>' : ""}
+        </div>
+        <p class="klein">Komt in <code>data/aanvullingen.json</code> op GitHub. Bezoekers zien het na een paar minuten.</p>
+      </form>`);
+    d.classList.add("dialoog-breed");
+    const veld = (id) => $(`#${id}`, d);
+    veld("av-sluit").addEventListener("click", () => d.close());
+
+    function lees() {
+      const x = {};
+      for (const v of AANVUL_VELDEN) {
+        const ruw = veld(`av-${v.veld}`).value.trim();
+        if (!ruw) continue;
+        if (v.soort === "getal") {
+          const n = Number(ruw.replace(",", "."));
+          if (!isFinite(n) || n < v.min || n > v.max) throw new Error(`${v.label}: vul een getal in van ${v.min} tot ${v.max}.`);
+          x[v.veld] = v.dec ? Math.round(n * 10) / 10 : Math.round(n);
+        } else if (v.soort === "jaar") {
+          const j = Number(ruw);
+          if (!/^\d{4}$/.test(ruw) || j < 1850 || j > new Date().getFullYear() + 6) throw new Error(`${v.label}: vul een jaar in, zoals 2006.`);
+          x[v.veld] = j;
+        } else {
+          x[v.veld] = netteTekst(ruw).slice(0, v.max || 100);
+        }
+      }
+      if (x.geopend && x.gesloten && x.gesloten < x.geopend) throw new Error("Gesloten kan niet eerder zijn dan geopend.");
+      return x;
+    }
+
+    async function bewaar(regel, bericht) {
+      await wijzigJson("data/aanvullingen.json", "aanvullingen",
+        (lijst) => [...lijst.filter((x) => x && x.id !== a.id), ...(regel ? [regel] : [])], bericht);
+      for (const b of data.aanvulDoel(a.id)) herstelAanvulling(b);
+      if (regel) {
+        data.aanvullingen.set(a.id, regel);
+        for (const b of data.aanvulDoel(a.id)) zetAanvulling(b, regel);
+      } else data.aanvullingen.delete(a.id);
+      if (regel && regel.park) {
+        const zelfde = data.lijst.find((x) => x.parkId && zoekbaar(x.park) === zoekbaar(regel.park));
+        for (const b of data.aanvulDoel(a.id)) b.parkId = zelfde ? zelfde.parkId : undefined;
+      }
+    }
+
+    veld("av-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fout = veld("av-fout");
+      let x;
+      try { x = lees(); } catch (f) { fout.textContent = f.message; return; }
+      const bron = netteTekst(veld("av-bron").value).slice(0, 200);
+      if (Object.keys(x).length && !bron) { fout.textContent = "Vul in waar je het vandaan hebt (bron)."; return; }
+      const regel = Object.keys(x).length ? { id: a.id, ...x, bron } : null;
+      const gelukt = await metKnop(veld("av-opslaan"), fout, "Opslaan…", () =>
+        bewaar(regel, regel ? `Gegevens aangevuld: ${a.naam}` : `Aanvulling weggehaald: ${a.naam}`));
+      if (!gelukt) return;
+      d.close();
+      klaar();
+      toast("Opgeslagen. Bezoekers zien het over een paar minuten.", true);
+    });
+    veld("av-weg")?.addEventListener("click", (e) => {
+      if (!confirm("Je aanvulling bij deze achtbaan weghalen? Dan gelden weer de gegevens uit de bronnen.")) return;
+      metKnop(e.currentTarget, veld("av-fout"), "Bezig…", async () => {
+        await bewaar(null, `Aanvulling weggehaald: ${a.naam}`);
+        d.close();
+        klaar();
+      });
+    });
+  }
+
   function zetTerug(id, naam) {
     return wijzigJson("data/verborgen.json", "verborgen", (lijst) => lijst.filter((v) => v && v.id !== id), `Teruggezet: ${naam}`);
   }
@@ -1847,9 +2082,7 @@
       try { persoon = await laadPersoon(data, ik); } catch (e) { console.warn(e); toast(e.message, true); }
     }
     zetPersoon(data, persoon || await laadEigenaar(data));
-    if (data.details) {
-      try { Object.assign(a, ((await haalJson(data.details, false)) || {})[a.id] || {}); } catch (e) { console.warn(e); }
-    }
+    try { await haalDetails(data, a); } catch (e) { console.warn(e); }
     tekenAchtbaan(a, data);
   }
 
@@ -1882,6 +2115,7 @@
           ${a.deelVan ? sporenHtml(a, data) : ""}
           ${plek ? `<p class="plek">${plek}</p>` : ""}
           <p class="status status-${esc(a.status || "open")}">${esc(statusTekst(a))}</p>
+          ${vorigeParkenHtml(a)}
         </div>
         ${stempel}
       </header>
@@ -1919,6 +2153,7 @@
     }
     if (beheer) {
       koppelFotoBeheer(a, data, opnieuw);
+      $("[data-aanvullen]", vak)?.addEventListener("click", () => openAanvulVenster(a, data, opnieuw));
       $("[data-splits]", vak)?.addEventListener("click", (e) => openSplitsVenster(a, data, e.currentTarget.dataset.splits ? JSON.parse(e.currentTarget.dataset.splits) : null));
       $("[data-verberg]", vak)?.addEventListener("click", () => openVerbergVenster(a, data));
       $("[data-terugzetten]", vak)?.addEventListener("click", (e) => metKnop(e.currentTarget, null, "Bezig…", async () => {
@@ -1930,14 +2165,14 @@
     }
 
     if (wikidataVan(a)) {
-      onthoud(`wiki:${wikidataVan(a)}`, () => haalWikipedia(wikidataVan(a))).then((w) => {
+      onthoud(`wiki:${wikidataVan(a)}`, () => haalWikipedia(wikidataVan(a), a.wp)).then((w) => {
         if (!w || !w.tekst) return;
         const alineas = w.tekst.split(/\n+/).map((p) => p.trim()).filter(Boolean).slice(0, 3);
         $("#wiki").innerHTML = alineas.map((p) => `<p>${esc(p)}</p>`).join("") +
           `<p class="bron-klein">Bron: <a href="${w.url}">${w.taal === "nl" ? "Wikipedia" : "Engelstalige Wikipedia"}</a>, CC BY-SA.</p>`;
         $("#over").hidden = false;
         const links = $(".links");
-        if (links) links.insertAdjacentHTML("beforeend", `<li><a href="${w.url}">Wikipedia</a></li>`);
+        if (links && !(a.wp && a.wp[w.taal])) links.insertAdjacentHTML("beforeend", `<li><a href="${w.url}">Wikipedia</a></li>`);
       }).catch((e) => console.warn("Wikipedia niet bereikbaar", e));
     }
     if (!eigenFoto && a.foto && !isEigenFoto(a.foto)) {
