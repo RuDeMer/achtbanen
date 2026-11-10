@@ -74,7 +74,7 @@ Een inloglink en een uitnodiging werken één keer en een uur lang (*Email OTP E
 ### Stap 4: de site koppelen
 
 1. Kies in Supabase **Project Settings** (het tandwiel), **API Keys**. Kopieer de **Publishable key** (begint met `sb_publishable_`). Staat daar nog niets, kies dan **Create new API Keys**.
-2. De **Project URL** staat bij **Project Settings**, **Data API** (of onder de knop **Connect** bovenaan). Hij ziet eruit als `https://abcdefghijkl.supabase.co`.
+2. De **Project URL** staat bij **Project Settings**, **Data API** (of onder de knop **Connect** bovenaan). Je hebt alleen het begin nodig: `https://abcdefghijkl.supabase.co`. Staat er nog iets achter, zoals `/rest/v1/`, laat dat dan weg. (De site haalt het er ook zelf af.) Je vindt het stuk `abcdefghijkl` ook in de adresbalk van je browser als je het project open hebt: `supabase.com/dashboard/project/abcdefghijkl`.
 3. Open `config.js` op GitHub (potloodje) en vul ze in:
 
    ```js

@@ -256,9 +256,23 @@
      de database zelf (row level security) zorgt dat iedereen alleen zijn eigen
      gegevens kan wijzigen. Staat Supabase niet in config.js, dan werkt de site
      zoals vroeger met data/gereden.json. */
-  const sbAan = !!(window.supabase && /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(SITE.supabaseUrl || "") &&
-    /^(sb_publishable_|eyJ)/.test(SITE.supabaseSleutel || ""));
-  if (/^sb_secret_/.test(SITE.supabaseSleutel || "")) console.error("In config.js staat een GEHEIME sleutel. Haal hem meteen weg en maak in Supabase een nieuwe aan.");
+  // De project-URL uit config.js. Staat er iets achter .supabase.co (zoals /rest/v1/), dan halen we dat eraf.
+  const sbUrl = (() => {
+    try {
+      const u = new URL(String(SITE.supabaseUrl || "").trim());
+      return u.protocol === "https:" && /^[a-z0-9-]+\.supabase\.co$/i.test(u.hostname) ? u.origin : "";
+    } catch (e) { return ""; }
+  })();
+  const sbSleutel = String(SITE.supabaseSleutel || "").trim();
+  const geheimeSleutel = /^sb_secret_/.test(sbSleutel);
+  // Is config.js wel ingevuld maar klopt er iets niet? Dan zegt de accountpagina wat.
+  const configFout = !(SITE.supabaseUrl || SITE.supabaseSleutel) ? ""
+    : geheimeSleutel ? "In config.js staat een GEHEIME sleutel (sb_secret_…). Haal hem meteen weg, maak in Supabase bij Project Settings > API Keys een nieuwe geheime sleutel aan en verwijder de oude. Gebruik hier de Publishable key."
+      : !sbUrl ? "In config.js klopt supabaseUrl niet. Hij moet eruitzien als https://abcdefghijkl.supabase.co (zonder iets erachter)."
+        : !/^(sb_publishable_|eyJ)/.test(sbSleutel) ? "In config.js klopt supabaseSleutel niet. Gebruik de Publishable key; die begint met sb_publishable_."
+          : !window.supabase ? "De Supabase-bibliotheek (assets/vendor/supabase.js) is niet geladen." : "";
+  if (configFout) console.error(configFout);
+  const sbAan = !configFout && !!sbUrl;
 
   // Kwam je binnen via een verlopen of al gebruikte link? Dat staat in het adres.
   // Eerst bewaren, want daarna ruimt de site het adres op.
@@ -276,7 +290,7 @@
   }
   const welkeLink = adresHash.get("type"); // magiclink of invite
 
-  const sb = sbAan ? window.supabase.createClient(SITE.supabaseUrl.replace(/\/$/, ""), SITE.supabaseSleutel, {
+  const sb = sbAan ? window.supabase.createClient(sbUrl, sbSleutel, {
     auth: { storageKey: "achtbanen-sessie", flowType: "implicit", detectSessionInUrl: true, persistSession: true, autoRefreshToken: true },
   }) : null;
 
@@ -2303,6 +2317,10 @@
 
   function startAccountPagina() {
     const vak = $("#account-vak");
+    if (configFout) {
+      vak.innerHTML = `<p><strong>Accounts staan nog niet aan: er klopt iets niet in config.js.</strong></p><p class="fout">${esc(configFout)}</p>`;
+      return;
+    }
     if (!sbAan) {
       vak.innerHTML = `<p><strong>Accounts staan nog niet aan op deze site.</strong></p>
         <p class="klein">Ben jij de eigenaar? Vul <code>supabaseUrl</code> en <code>supabaseSleutel</code> in bij <code>config.js</code>. Hoe dat gaat, staat in de README.</p>`;
