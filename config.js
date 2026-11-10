@@ -17,8 +17,8 @@ window.SITE = {
   // en Project Settings > Data API (de URL).
   // Alleen de publieke sleutel (sb_publishable_…) hoort hier. De geheime sleutel
   // (sb_secret_… of service_role) komt NOOIT in dit bestand of ergens anders in de code.
-  supabaseUrl: "",
-  supabaseSleutel: "",
+  supabaseUrl: "https://zroovksrqzrufekbitjc.supabase.co/rest/v1/",
+  supabaseSleutel: "sb_publishable_ag2SFfCD9z3pAajJNCymfA_FNxamJlY",
 
   // Jouw gebruikersnaam op de site. De startpagina toont de credits van dit profiel.
   eigenaar: "ruben",
