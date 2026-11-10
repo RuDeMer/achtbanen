@@ -38,6 +38,7 @@ import urllib.request
 from collections import Counter, defaultdict
 
 import normaliseer as norm
+import rapport
 import wikipedia as wp
 
 MAP = pathlib.Path(__file__).resolve().parent.parent
@@ -1915,6 +1916,7 @@ def zoek_fotos(alle, wd_ids, vorige_per_id, tel, categorieen=None, artikelen=Non
     for i, a in enumerate(zoeken, 1):
         if time.monotonic() - begin > ZOEK_TOTAAL:
             print(f"  zoeken gestopt na {i - 1} banen (tijd op); de rest volgt de volgende keer")
+            tel["foto_zoeken_niet_af"] = len(zoeken) - (i - 1)
             break
         try:
             f = foto_via_zoeken(a, cache)
@@ -1948,6 +1950,7 @@ def zoek_fotos(alle, wd_ids, vorige_per_id, tel, categorieen=None, artikelen=Non
         a.pop("fotoInfo", None)
         if fout and oud.get("foto"):
             a["foto"] = oud["foto"]  # iets lukte niet: de foto van de vorige keer blijft
+            tel["foto_niet_gecontroleerd"] += 1
             if oud.get("fotoInfo"):
                 a["fotoInfo"] = oud["fotoInfo"]
             tel["foto_vorige"] += 1
@@ -2307,6 +2310,32 @@ def lees_vorige():
     return vorige
 
 
+RAPPORT = MAP / "data" / "rapport.json"
+
+
+def schrijf_rapport(achtbanen, tel):
+    """Kwaliteitsrapport in data/rapport.json en (op GitHub) in de samenvatting van de run."""
+    try:
+        vorige = json.loads(RAPPORT.read_text(encoding="utf-8")) if RAPPORT.exists() else None
+    except ValueError:
+        vorige = None
+    meldingen = []
+    if tel["osm_vorige_keer"]:
+        meldingen.append(f"OpenStreetMap was niet bereikbaar. De {tel['osm_vorige_keer']} achtbanen uit OpenStreetMap "
+                         "van de vorige keer zijn gebleven.")
+    if tel["foto_zoeken_niet_af"]:
+        meldingen.append(f"Zoeken naar foto's op Commons stopte na de tijdslimiet; {tel['foto_zoeken_niet_af']} banen "
+                         "zonder foto komen de volgende keer aan de beurt.")
+    if tel["foto_niet_gecontroleerd"]:
+        meldingen.append(f"Bij {tel['foto_niet_gecontroleerd']} banen lukte het zoeken of controleren van foto's niet; "
+                         "de foto van de vorige keer is gebleven.")
+    r = rapport.maak_rapport(achtbanen, tel, datetime.date.today().isoformat(), vorige, meldingen)
+    rapport.schrijf(r, RAPPORT)
+    print(f"\nKwaliteitsrapport: {RAPPORT.relative_to(MAP)}")
+    for v in r["velden"].values():
+        print(f"  {v['naam'] + ':':<32}{v['procent']:>6.1f} %".replace(".", ","))
+
+
 def main():
     # Elke regel meteen in het logboek, ook in GitHub Actions
     if hasattr(sys.stdout, "reconfigure"):
@@ -2318,6 +2347,8 @@ def main():
         achtbanen, aliassen, voorstellen, park_aliassen = bouw(vorige, tel)
     except Exception as fout:  # noqa: BLE001
         print(f"\n✗ Ophalen mislukt: {fout}")
+        rapport.meld_mislukt(f"Ophalen mislukt: {fout}. "
+                             + (f"De lijst van de vorige keer ({vorig_aantal} achtbanen) blijft staan." if vorig_aantal else ""))
         if vorig_aantal:
             print(f"  De bestaande lijst met {vorig_aantal} achtbanen blijft staan.")
             return 0
@@ -2326,6 +2357,7 @@ def main():
     if vorig_aantal and len(achtbanen) < vorig_aantal * 0.5:
         print(f"\n✗ Verdacht weinig achtbanen ({len(achtbanen)} tegen {vorig_aantal} vorige keer).")
         print("  De bestaande lijst blijft staan.")
+        rapport.meld_mislukt(f"Verdacht weinig achtbanen ({len(achtbanen)} tegen {vorig_aantal} vorige keer). De lijst van de vorige keer blijft staan.")
         return 0
 
     tel["met_foto"] = sum(1 for a in achtbanen if a.get("foto"))
@@ -2334,6 +2366,7 @@ def main():
     grootte = schrijf(achtbanen, aliassen, tel, voorstellen, park_aliassen)
     print(f"\n✓ {len(achtbanen)} achtbanen opgeslagen in {UITVOER.relative_to(MAP)}")
     samenvatting(tel, grootte)
+    schrijf_rapport(achtbanen, tel)
     if os.environ.get("ACHTBANEN_UITLEG") == "1":
         print("\nWeggelaten omdat het geen achtbaan is:")
         for reden, naam, park, i in sorted(WEGGELATEN, key=lambda w: (w[0], str(w[1]).casefold())):

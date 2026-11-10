@@ -222,5 +222,50 @@ class Fotos(unittest.TestCase):
         self.assertFalse(h.foto_info(niet)["vrij"])
 
 
+class Rapport(unittest.TestCase):
+    def test_rapport(self):
+        import rapport
+        banen = [
+            {"id": "Q1", "naam": "A", "status": "open", "land": "Nederland", "park": "P", "foto": "a.jpg", "hoogte": 30,
+             "type": "Houten achtbaan", "bron": {"hoogte": "wd", "type": "wp:en"}},
+            {"id": "Q2", "naam": "B", "status": "open", "land": "Nederland", "park": "P", "type": "Achtbaan", "bron": {"park": "osm"}},
+            {"id": "Q3", "naam": "C", "status": "gesloten", "land": "Duitsland", "hoogte": 12, "lat": 1, "lon": 2},
+            {"id": "Q4", "naam": "D", "status": "gepland"},
+        ]
+        tel = {"foto_liggend": 1, "foto_p18": 1}
+        r = rapport.maak_rapport(banen, tel, "2026-11-10", vorige={"velden": {"foto": {"procent": 20.0}}}, meldingen=["OSM weg"])
+        self.assertEqual(r["totaal"], 4)
+        self.assertEqual(r["velden"]["foto"]["procent"], 25.0)
+        self.assertEqual(r["velden"]["foto"]["procentOpen"], 50.0)
+        self.assertEqual(r["velden"]["foto"]["vorige"], 20.0)
+        self.assertEqual(r["velden"]["hoogte"]["aantal"], 2)
+        self.assertEqual(r["velden"]["type"]["aantal"], 1)  # "Achtbaan" telt niet als type
+        self.assertEqual(r["velden"]["plek"]["aantal"], 1)
+        self.assertEqual((r["landen"], r["parken"]), (2, 1))
+        self.assertEqual(r["bronnen"], {"wd": 1, "wp:en": 1, "osm": 1})
+        self.assertEqual(r["perStatus"], {"open": 2, "gesloten": 1, "gepland": 1})
+        md = rapport.markdown(r)
+        self.assertIn("| Foto | 1 | 25,0 % | 50,0 % | +5,0 % |", md)
+        self.assertIn("### Let op", md)
+        self.assertIn("- OSM weg", md)
+        self.assertIn("Wikidata (P18) 1", md)
+
+    def test_samenvatting_op_github(self):
+        import os, tempfile, json, rapport
+        with tempfile.TemporaryDirectory() as map_:
+            samen = os.path.join(map_, "samenvatting.md")
+            pad = os.path.join(map_, "rapport.json")
+            os.environ["GITHUB_STEP_SUMMARY"] = samen
+            try:
+                rapport.schrijf(rapport.maak_rapport([{"id": "Q1", "naam": "A", "status": "open"}], {}, "2026-11-10"), pad)
+                rapport.meld_mislukt("Wikidata gaf geen antwoord.")
+            finally:
+                del os.environ["GITHUB_STEP_SUMMARY"]
+            self.assertEqual(json.load(open(pad, encoding="utf-8"))["totaal"], 1)
+            tekst = open(samen, encoding="utf-8").read()
+            self.assertIn("## Kwaliteit van de gegevens", tekst)
+            self.assertIn("**Let op:** Wikidata gaf geen antwoord.", tekst)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

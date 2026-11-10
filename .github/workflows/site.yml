@@ -51,8 +51,8 @@ jobs:
           if [ -f "$RUNNER_TEMP/nieuw/rapport.json" ]; then cp "$RUNNER_TEMP/nieuw/rapport.json" data/rapport.json; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A data/achtbanen.json data/details
-          git add -A data/details.json data/rapport.json 2>/dev/null || true
+          # Alles in data/ (na de reset zijn alleen de nieuwe lijst, details en het rapport anders)
+          git add -A data
           if ! git diff --cached --quiet; then
             git commit -m "Achtbanen bijgewerkt vanuit Wikidata, Wikipedia en OpenStreetMap"
             git push origin HEAD:main

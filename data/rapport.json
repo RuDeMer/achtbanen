@@ -1,0 +1,121 @@
+{
+ "uitleg": "Kwaliteit van de gegevens na de laatste run van scripts/haal_achtbanen.py. procent: van alle achtbanen; procentOpen: van de achtbanen die open zijn; vorige: procent van de run daarvoor.",
+ "bijgewerkt": "2026-11-10",
+ "totaal": 2120,
+ "perStatus": {
+  "gesloten": 304,
+  "open": 1808,
+  "gepland": 8
+ },
+ "landen": 55,
+ "parken": 658,
+ "velden": {
+  "foto": {
+   "naam": "Foto",
+   "aantal": 1318,
+   "procent": 62.2,
+   "procentOpen": 58.9
+  },
+  "park": {
+   "naam": "Park",
+   "aantal": 2056,
+   "procent": 97.0,
+   "procentOpen": 96.8
+  },
+  "land": {
+   "naam": "Land",
+   "aantal": 1968,
+   "procent": 92.8,
+   "procentOpen": 91.6
+  },
+  "plek": {
+   "naam": "Plek op de kaart",
+   "aantal": 1932,
+   "procent": 91.1,
+   "procentOpen": 92.9
+  },
+  "geopend": {
+   "naam": "Openingsjaar",
+   "aantal": 1242,
+   "procent": 58.6,
+   "procentOpen": 51.8
+  },
+  "type": {
+   "naam": "Type (niet alleen 'Achtbaan')",
+   "aantal": 1283,
+   "procent": 60.5,
+   "procentOpen": 54.4
+  },
+  "fabrikant": {
+   "naam": "Fabrikant",
+   "aantal": 1240,
+   "procent": 58.5,
+   "procentOpen": 53.1
+  },
+  "model": {
+   "naam": "Model",
+   "aantal": 903,
+   "procent": 42.6,
+   "procentOpen": 38.7
+  },
+  "hoogte": {
+   "naam": "Hoogte",
+   "aantal": 1126,
+   "procent": 53.1,
+   "procentOpen": 48.0
+  },
+  "valhoogte": {
+   "naam": "Valhoogte",
+   "aantal": 495,
+   "procent": 23.3,
+   "procentOpen": 21.1
+  },
+  "lengte": {
+   "naam": "Lengte",
+   "aantal": 1113,
+   "procent": 52.5,
+   "procentOpen": 47.7
+  },
+  "snelheid": {
+   "naam": "Topsnelheid",
+   "aantal": 1060,
+   "procent": 50.0,
+   "procentOpen": 45.9
+  },
+  "inversies": {
+   "naam": "Inversies",
+   "aantal": 1082,
+   "procent": 51.0,
+   "procentOpen": 45.9
+  },
+  "duur": {
+   "naam": "Ritduur",
+   "aantal": 869,
+   "procent": 41.0,
+   "procentOpen": 36.8
+  }
+ },
+ "fotos": {
+  "liggend": 1203,
+  "tweedeKeus": 115,
+  "perBron": {
+   "p18": 794,
+   "categorie": 272,
+   "wikipedia": 93,
+   "zoeken": 45,
+   "vorige": 114
+  }
+ },
+ "bronnen": {
+  "wd": 6171,
+  "wp:en": 6014,
+  "wp:de": 1460,
+  "wp:nl": 1356,
+  "osm": 854,
+  "plek": 23
+ },
+ "meldingen": [
+  "OpenStreetMap was niet bereikbaar. De 759 achtbanen uit OpenStreetMap van de vorige keer zijn gebleven.",
+  "Zoeken naar foto's op Commons stopte na de tijdslimiet; 81 banen zonder foto komen de volgende keer aan de beurt."
+ ]
+}

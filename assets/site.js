@@ -2255,13 +2255,13 @@
   function beheerBlokHtml(a, data) {
     if (data.verborgen.has(a.id)) {
       const v = data.verborgen.get(a.id);
-      return `<section class="blok"><div class="mijn-rit beheer-blok">
+      return `<section class="blok" id="beheer"><div class="mijn-rit beheer-blok">
         <p><strong>Deze baan is verborgen</strong>${v.reden ? ` (${esc(v.reden)})` : ""}. Bezoekers zien hem niet.</p>
         <button class="knop knop-licht" type="button" data-terugzetten>Terugzetten</button></div></section>`;
     }
     const voorstel = !a.deelVan && data.voorstellen[a.id];
     const foto = a.eigenFoto;
-    return `<section class="blok"><h2>Beheer</h2><div class="mijn-rit beheer-blok">
+    return `<section class="blok" id="beheer"><h2>Beheer</h2><div class="mijn-rit beheer-blok">
       <div class="foto-kiezen">
         <span class="foto-kiezen-titel">Eigen foto</span>
         <div class="foto-kiezen-rij">
@@ -2568,6 +2568,8 @@
     zetPersoon(data, persoon || await laadEigenaar(data));
     try { await haalDetails(data, a); } catch (e) { console.warn(e); }
     tekenAchtbaan(a, data);
+    // Van "Ontbrekende gegevens": meteen naar de beheerknoppen
+    if (location.hash === "#beheer") $("#beheer")?.scrollIntoView({ block: "start" });
   }
 
   function tekenAchtbaan(a, data) {
@@ -3082,6 +3084,119 @@
     });
   }
 
+  /* ---------- Beheer: ontbrekende gegevens ----------
+     Je eigen credits waar iets aan ontbreekt, zodat je ze kunt aanvullen. Onderaan het
+     kwaliteitsrapport van de laatste run (data/rapport.json). */
+  const ONTBREEKT = [
+    { k: "foto", naam: "Foto", mist: (a) => !heeftFoto(a) },
+    { k: "hoogte", naam: "Hoogte", mist: (a) => a.hoogte == null },
+    { k: "snelheid", naam: "Snelheid", mist: (a) => a.snelheid == null },
+    { k: "lengte", naam: "Lengte", mist: (a) => a.lengte == null },
+    { k: "inversies", naam: "Inversies", mist: (a) => a.inversies == null },
+    { k: "geopend", naam: "Openingsjaar", mist: (a) => !a.geopend },
+    { k: "fabrikant", naam: "Fabrikant", mist: (a) => !a.fabrikant },
+    { k: "type", naam: "Type", mist: (a) => !a.type || a.type === "Achtbaan" },
+    { k: "park", naam: "Park", mist: (a) => !a.park },
+    { k: "plek", naam: "Plek op de kaart", mist: (a) => a.lat == null || a.lon == null },
+  ];
+
+  async function startOntbrekend() {
+    const vak = $("#inhoud");
+    if (!beheer) {
+      vak.innerHTML = `<div class="melding"><h1>Alleen voor beheer</h1>
+        <p>Deze pagina is er alleen voor de eigenaar van de site. Plak eerst je token op de <a href="beheer.html">beheerpagina</a>.</p></div>`;
+      return;
+    }
+    let data, rapport = null;
+    try {
+      [data, rapport] = await Promise.all([laadAlles(), fetch(`data/rapport.json?v=${Date.now()}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)]);
+      zetPersoon(data, await laadEigenaar(data));
+    } catch (e) { toonFout(vak, e); return; }
+
+    const st = { k: params.get("mist") && ONTBREEKT.some((c) => c.k === params.get("mist")) ? params.get("mist") : "" };
+    vak.innerHTML = `
+      <header class="titel"><div>
+        <p class="bovenkop">Beheer</p>
+        <h1>Ontbrekende gegevens</h1>
+        <p class="plek">Je credits waar nog iets aan ontbreekt. Vul het aan met een bron (bijvoorbeeld een bordje bij de ingang of de site van het park): je aanvulling gaat voor op alle andere bronnen.</p>
+      </div></header>
+      <section class="blok" aria-labelledby="mist-titel">
+        <h2 id="mist-titel">Mijn credits</h2>
+        <p id="mist-samen"></p>
+        <div class="chips mist-keuze" id="mist-keuze" role="group" aria-label="Laat alleen zien wat mist"></div>
+        <div id="mist-lijst"></div>
+      </section>
+      <section class="blok" id="rapport" aria-labelledby="rapport-titel"></section>`;
+
+    function teken() {
+      const credits = [...new Set(data.gereden)].sort(opNaam);
+      const metGat = credits.map((a) => ({ a, mist: ONTBREEKT.filter((c) => c.mist(a)) })).filter((x) => x.mist.length);
+      const n = credits.length;
+      $("#mist-samen").textContent = n
+        ? `Van je ${getal(n)} ${meervoud(n, "credit", "credits")} ${metGat.length === 1 ? "mist bij één" : `missen bij ${getal(metGat.length)}`} nog gegevens.`
+        : "Je hebt nog geen credits.";
+      $("#mist-keuze").innerHTML = [["", `Alles (${getal(metGat.length)})`], ...ONTBREEKT.map((c) => [c.k, `${c.naam} (${getal(credits.filter(c.mist).length)})`])]
+        .map(([k, tekst]) => `<button type="button" class="chip${st.k === k ? " is-aan" : ""}" data-mist="${k}" aria-pressed="${st.k === k}">${esc(tekst)}</button>`).join("");
+      const rijen = metGat.filter((x) => !st.k || x.mist.some((c) => c.k === st.k))
+        .sort((x, y) => y.mist.length - x.mist.length || opNaam(x.a, y.a));
+      $("#mist-lijst").innerHTML = rijen.length ? `<div class="tabel-vak"><table class="tabel mist-tabel">
+        <caption class="sr">Credits met ontbrekende gegevens</caption>
+        <thead><tr><th scope="col">Achtbaan</th><th scope="col">Park</th><th scope="col">Wat mist</th><th scope="col"><span class="sr">Aanvullen</span></th></tr></thead>
+        <tbody>${rijen.map(({ a, mist }) => `<tr>
+          <td class="naam"><a href="${pagina(a)}">${esc(a.naam)}</a></td>
+          <td>${a.park ? `<a href="${parkPagina(parkSleutel(a))}">${esc(a.park)}</a>` : ""}</td>
+          <td class="mist">${mist.map((c) => `<span class="mist-label${c.k === st.k ? " is-aan" : ""}">${esc(c.naam)}</span>`).join(" ")}</td>
+          <td class="acties">${mist.some((c) => !["foto", "park", "plek"].includes(c.k)) ? `<button type="button" class="knop-klein" data-aanvul="${esc(a.id)}">Aanvullen</button>` : ""}
+            ${mist.some((c) => c.k === "foto") ? `<a class="knop-klein" href="${pagina(a)}#beheer">Foto</a>` : ""}</td>
+        </tr>`).join("")}</tbody></table></div>` : `<p>${st.k ? "Bij geen van je credits mist dit." : "Alles is compleet. Mooi!"}</p>`;
+    }
+
+    vak.addEventListener("click", async (e) => {
+      const keuze = e.target.closest("[data-mist]");
+      if (keuze) {
+        st.k = keuze.dataset.mist;
+        const u = new URLSearchParams(location.search);
+        if (st.k) u.set("mist", st.k); else u.delete("mist");
+        history.replaceState(null, "", `${location.pathname}${u.toString() ? `?${u}` : ""}`);
+        teken();
+        $(`[data-mist="${st.k}"]`)?.focus();
+        return;
+      }
+      const knop = e.target.closest("[data-aanvul]");
+      if (!knop) return;
+      const a = data.perId.get(knop.dataset.aanvul);
+      if (!a) return;
+      try { await haalDetails(data, a); } catch (fout) { console.warn(fout); }
+      openAanvulVenster(a, data, () => { teken(); toast(`Gegevens van ${a.naam} opgeslagen.`, true); });
+    });
+    teken();
+    tekenRapport($("#rapport"), rapport);
+  }
+
+  function tekenRapport(vak, r) {
+    if (!r || !r.velden) {
+      vak.innerHTML = `<h2 id="rapport-titel">Alle achtbanen</h2><p>Er is nog geen kwaliteitsrapport. Dat komt na de volgende run van het script (op GitHub: Actions).</p>`;
+      return;
+    }
+    const st = r.perStatus || {};
+    const pct = (x) => (x == null ? "" : `${getal(x, 1)}%`);
+    vak.innerHTML = `
+      <h2 id="rapport-titel">Alle achtbanen</h2>
+      <p>Na de laatste run${r.bijgewerkt ? ` (${esc(datum(r.bijgewerkt))})` : ""}: ${getal(r.totaal)} achtbanen
+        (${getal(st.open || 0)} open, ${getal(st.gesloten || 0)} gesloten, ${getal(st.gepland || 0)} op komst) in ${getal(r.landen)} landen.</p>
+      <div class="tabel-vak"><table class="tabel rapport-tabel">
+        <caption class="sr">Hoeveel achtbanen elk gegeven hebben</caption>
+        <thead><tr><th scope="col">Gegeven</th><th scope="col" class="getal">Aantal</th><th scope="col" class="getal">Van alle banen</th>
+          <th scope="col" class="getal kol-extra">Van de open banen</th><th scope="col" class="getal kol-extra">Vorige keer</th></tr></thead>
+        <tbody>${Object.values(r.velden).map((v) => `<tr>
+          <td>${esc(v.naam)}</td><td class="getal">${getal(v.aantal)}</td>
+          <td class="getal deel"><span class="balk" aria-hidden="true"><span style="width:${Number(v.procent) || 0}%"></span></span>${pct(v.procent)}</td>
+          <td class="getal kol-extra">${pct(v.procentOpen)}</td><td class="getal kol-extra">${pct(v.vorige)}</td></tr>`).join("")}</tbody>
+      </table></div>
+      ${r.fotos ? `<p class="klein">Foto's: ${getal(r.fotos.liggend || 0)} liggende foto's van de baan zelf, ${getal(r.fotos.tweedeKeus || 0)} tweede keus (staand, bouw, station of treintje).</p>` : ""}
+      ${(r.meldingen || []).length ? `<div class="mijn-rit rapport-let-op"><p><strong>Let op</strong></p><ul>${r.meldingen.map((m) => `<li>${esc(m)}</li>`).join("")}</ul></div>` : ""}`;
+  }
+
   /* ---------- Ranglijst op de startpagina ---------- */
 
   async function tekenRanglijst(data) {
@@ -3498,5 +3613,6 @@
     if (PAGINA === "vergelijk") startVergelijk();
     if (PAGINA === "park") startPark();
     if (PAGINA === "landen") startLanden();
+    if (PAGINA === "ontbrekend") startOntbrekend();
   })();
 })();

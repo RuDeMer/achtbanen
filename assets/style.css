@@ -742,3 +742,27 @@ a.knop-klein { text-decoration: none; display: inline-block; }
   .landen-tabel td.naam { min-width: 0; white-space: normal; }
   .landen-tabel .deel { min-width: 0; }
 }
+
+/* ---------- beheer: ontbrekende gegevens ---------- */
+
+.mist-keuze { margin: .25rem 0 1rem; }
+.mist-keuze .chip { background: var(--papier); border-color: var(--lijn); }
+.mist-keuze .chip.is-aan { background: var(--rail-zacht); border-color: var(--rail); font-weight: 700; }
+.mist-tabel td.mist { white-space: normal; min-width: 12rem; }
+.mist-label {
+  display: inline-block; margin: 0 .15rem .2rem 0; padding: .05rem .5rem; border-radius: 999px;
+  font-size: .8rem; color: var(--inkt-zacht); border: 1px solid var(--lijn);
+}
+.mist-label.is-aan { color: var(--rail); border-color: var(--rail); }
+.mist-tabel td.acties { text-align: right; }
+.mist-tabel td.acties .knop-klein + .knop-klein { margin-left: .3rem; }
+.rapport-tabel .deel { min-width: 9rem; }
+.rapport-let-op { margin-top: 1rem; }
+.rapport-let-op ul { margin: 0; padding-left: 1.1rem; }
+#rapport .klein { font-size: .9rem; color: var(--inkt-zacht); }
+@media (max-width: 40rem) {
+  .rapport-tabel .kol-extra, .rapport-tabel .balk { display: none; }
+  .rapport-tabel td, .rapport-tabel th { white-space: normal; }
+  .rapport-tabel .deel { min-width: 0; }
+  .mist-tabel td.mist { min-width: 9rem; }
+}
