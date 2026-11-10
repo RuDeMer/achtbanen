@@ -173,6 +173,8 @@ class Normaliseren(unittest.TestCase):
         self.assertEqual(n.naam("Batman: Arkham Asylum (roller coaster)"), ("Batman: Arkham Asylum", False))
         self.assertEqual(n.naam("Space Mountain (Magic Kingdom)", "Magic Kingdom"), ("Space Mountain", False))
         self.assertEqual(n.naam("Wilde Hilde (im Bau)"), ("Wilde Hilde", True))
+        self.assertEqual(n.naam('"Веселі гірки"'), ("Веселі гірки", False))
+        self.assertEqual(n.naam('Big "Bad" Wolf'), ('Big "Bad" Wolf', False))
         self.assertEqual(n.naam("Wood Coaster (Mountain Flyer)", "Knight Valley"), ("Wood Coaster (Mountain Flyer)", False))
 
     def test_grenzen(self):
@@ -196,7 +198,17 @@ class Fotos(unittest.TestCase):
         self.assertEqual(h.foto_oordeel("Efteling logo.jpg", self.info()), 0)
         self.assertEqual(h.foto_oordeel("Baron 1898 entrance sign.jpg", self.info()), 0)
         self.assertEqual(h.foto_oordeel("Food stand near Baron 1898.jpg", self.info()), 0)
-        self.assertEqual(h.foto_oordeel("Baron 1898.png", self.info(mime="image/png")), 0)
+        self.assertEqual(h.foto_oordeel("Baron 1898.png", self.info(mime="image/png")), 1)  # png: tweede keus
+        self.assertEqual(h.foto_oordeel("Baron 1898.gif", self.info(mime="image/gif")), 0)
+        # Woorden uit de naam van de baan zijn geen afkeurwoord
+        self.assertEqual(h.foto_oordeel("Ravine Flyer II.jpg", self.info(2560, 1920)), 0)
+        self.assertEqual(h.foto_oordeel("Ravine Flyer II.jpg", self.info(2560, 1920), "Ravine Flyer II Waldameer"), 2)
+        self.assertEqual(h.foto_oordeel("Icon at Pleasure Beach.jpg", self.info(3024, 3780), "Icon Pleasure Beach Blackpool"), 1)
+        self.assertEqual(h.foto_oordeel("Freedom Flyer entrance.jpg", self.info(), "Freedom Flyer"), 0)
+        # Klein of vanuit het treintje: alleen als er niets beters is
+        self.assertEqual(h.foto_oordeel("Green Dragon.jpg", self.info(300, 184)), 1)
+        self.assertEqual(h.foto_oordeel("Green Dragon.jpg", self.info(200, 150)), 0)
+        self.assertEqual(h.foto_oordeel("Mine-Cart Madness on-ride view.jpg", self.info()), 1)
         self.assertEqual(h.foto_oordeel("Baron 1898.jpg", self.info(vrij=False)), 0)
         self.assertEqual(h.foto_oordeel("Baron 1898.jpg", None), 0)
 

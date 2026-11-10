@@ -35,7 +35,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 import normaliseer as norm
 import wikipedia as wp
@@ -1458,6 +1458,38 @@ ALGEMENE_NAAM = {"achtbaan", "rollercoaster", "coaster", "kiddiecoaster", "famil
                  "juniorcoaster", "familieachtbaan", "achterbahn", "kinderachterbahn", "minicoaster"}
 
 
+def land_uit_plek(alle, tel):
+    """Banen zonder land (vooral uit OpenStreetMap): het land van een andere baan in hetzelfde
+    park, of anders het land van de banen in de buurt: minstens twee bekende banen binnen 40 km,
+    allemaal in hetzelfde land. Zo wordt er bij een grens niets gegokt."""
+    met = [a for a in alle if a.get("land")]
+    per_park = defaultdict(Counter)
+    for a in met:
+        if a.get("park"):
+            per_park[a.get("parkId") or a["park"]][a["land"]] += 1
+    rooster = defaultdict(list)  # vakjes van een halve graad, zodat het snel blijft
+    for a in met:
+        if a.get("lat") is not None and a.get("lon") is not None:
+            rooster[(int(a["lat"] * 2), int(a["lon"] * 2))].append(a)
+    for a in alle:
+        if a.get("land"):
+            continue
+        park = per_park.get(a.get("parkId") or a.get("park") or "")
+        if park and len(park) == 1:
+            a["land"] = next(iter(park))
+        elif a.get("lat") is not None and a.get("lon") is not None:
+            vak = (int(a["lat"] * 2), int(a["lon"] * 2))
+            buren = [b["land"] for di in (-1, 0, 1) for dj in (-1, 0, 1) for b in rooster.get((vak[0] + di, vak[1] + dj), [])
+                     if afstand(a["lat"], a["lon"], b["lat"], b["lon"]) <= 40_000]
+            if len(buren) < 2 or len(set(buren)) != 1:
+                continue  # niemand in de buurt, of maar één baan (die zelf fout kan zijn), of een grens
+            a["land"] = buren[0]
+        else:
+            continue
+        a.setdefault("bron", {})["land"] = "plek"
+        tel["land_uit_plek"] += 1
+
+
 def voeg_dubbele_banen_samen(alle, niet, tel):
     """Twee keer dezelfde baan in hetzelfde park (zelfde naam), bijvoorbeeld een Wikidata-item
     en een OSM-object die niet aan elkaar gekoppeld waren, of twee Wikidata-items. De baan
@@ -1662,7 +1694,8 @@ TWEEDE_KEUS = {
     "construction", "bau", "baustelle", "aanbouw", "bouw", "station", "queue", "wachtrij", "warteschlange",
     "train", "trein", "zug", "wagon", "wagen", "car", "cars", "night", "nacht", "pov", "onride", "on-ride",
 }
-GOEDE_MIME = {"image/jpeg", "image/webp", "image/tiff"}
+GOEDE_MIME = {"image/jpeg", "image/webp", "image/tiff", "image/png"}  # png: alleen als tweede keus
+TWEEDE_ZINNEN = re.compile(r"on[ _-]?ride|point[ _-]of[ _-]view|\bpov\b|overview|aerial|luchtfoto", re.I)
 NIET_VRIJ = re.compile(r"non[- ]?free|fair[ _-]?use|all rights reserved", re.I)
 FOTO_IIPROP = {"iiprop": "size|mime|extmetadata", "iiextmetadatafilter": "LicenseShortName|License|UsageTerms|NonFree|Artist"}
 
@@ -1691,19 +1724,21 @@ def foto_info(pagina):
     }
 
 
-def foto_oordeel(bestand, info):
-    """2 = beste keus, 1 = tweede keus, 0 = niet gebruiken."""
+def foto_oordeel(bestand, info, naam=None):
+    """2 = beste keus, 1 = tweede keus, 0 = niet gebruiken. Woorden uit de naam van de baan
+    (en het park) tellen niet als afkeurwoord: "Freedom Flyer.jpg" is geen folder."""
     if not info or not info["vrij"] or info["mime"] not in GOEDE_MIME:
         return 0
-    woorden_ = set(re.split(r"[\W_]+", bestand.casefold()))
+    eigen = set(re.split(r"[\W_]+", str(naam or "").casefold()))
+    woorden_ = set(re.split(r"[\W_]+", bestand.casefold())) - eigen
     if woorden_ & GEEN_FOTO:
         return 0
     b, h = info["breed"], info["hoog"]
-    if b < 320 or h < 240:
+    if b < 280 or h < 180:
         return 0
-    if 1.2 <= b / h <= 2.4 and b >= 800 and h >= 450 and not woorden_ & TWEEDE_KEUS:
-        return 2
-    return 1
+    tweede = (woorden_ & TWEEDE_KEUS or TWEEDE_ZINNEN.search(bestand) or info["mime"] == "image/png"
+              or b < 800 or h < 450 or not 1.2 <= b / h <= 2.4)
+    return 1 if tweede else 2
 
 
 def haal_foto_info(bestanden, cache):
@@ -1738,7 +1773,7 @@ def beste_uit_pagina_lijst(paginas, cache, past=lambda titel, info: True, naam=N
         if not titel or not info:
             continue
         cache[titel] = info
-        oordeel = foto_oordeel(titel, info)
+        oordeel = foto_oordeel(titel, info, naam)
         if oordeel and past(titel, info):
             met_naam = bool(sleutel_naam) and sleutel_naam in volle_sleutel(titel)
             score = (oordeel, met_naam, min(info["breed"] * info["hoog"], 12_000_000), titel)
@@ -1818,9 +1853,11 @@ def zoek_fotos(alle, wd_ids, vorige_per_id, tel, categorieen=None, artikelen=Non
         if a.get("foto"):
             kandidaten[a["id"]].append(("p18" if a["id"] in wd_ids else "vorige", a["foto"]))
     osm_bestanden = {a["id"]: [w for soort, w in a.get("_osm_fotos", []) if soort == "bestand"] for a in alle}
+    namen = {a["id"]: f'{a["naam"]} {a.get("park") or ""}' for a in alle}
+    baannaam = {a["id"]: a["naam"] for a in alle}
 
     def oordeel(aid):
-        return max((foto_oordeel(b, cache.get(b)) for _, b in kandidaten[aid] + [("osm", f) for f in osm_bestanden[aid]]), default=0)
+        return max((foto_oordeel(b, cache.get(b), namen[aid]) for _, b in kandidaten[aid] + [("osm", f) for f in osm_bestanden[aid]]), default=0)
 
     try:
         haal_foto_info({b for lijst in kandidaten.values() for _, b in lijst} | {b for lijst in osm_bestanden.values() for b in lijst}, cache)
@@ -1829,12 +1866,11 @@ def zoek_fotos(alle, wd_ids, vorige_per_id, tel, categorieen=None, artikelen=Non
         fout = True
 
     # Nog geen liggende foto: de Commons-categorie (uit Wikidata of OSM)
-    namen = {a["id"]: a["naam"] for a in alle}
 
     def uit_categorie(aid, categorie, bron):
         nonlocal fout
         try:
-            f = foto_uit_categorie(categorie, cache, namen.get(aid))
+            f = foto_uit_categorie(categorie, cache, baannaam.get(aid))
         except Exception as e:  # noqa: BLE001
             print(f"  categorie {categorie}: {e}")
             fout = True
@@ -1896,7 +1932,7 @@ def zoek_fotos(alle, wd_ids, vorige_per_id, tel, categorieen=None, artikelen=Non
     for a in alle:
         keuze = None
         for niveau in (2, 1):
-            keuze = next(((bron, f) for bron, f in kandidaten[a["id"]] if foto_oordeel(f, cache.get(f)) == niveau), None)
+            keuze = next(((bron, f) for bron, f in kandidaten[a["id"]] if foto_oordeel(f, cache.get(f), namen[a["id"]]) == niveau), None)
             if keuze:
                 break
         oud = vorige_per_id.get(a["id"]) or {}
@@ -1906,7 +1942,7 @@ def zoek_fotos(alle, wd_ids, vorige_per_id, tel, categorieen=None, artikelen=Non
             a["foto"] = f
             a["fotoInfo"] = {k: v for k, v in {"maker": info["maker"] or None, "licentie": info["licentie"] or None, "bron": bron}.items() if v}
             tel[f"foto_{bron}"] += 1
-            tel["foto_liggend" if foto_oordeel(f, info) == 2 else "foto_tweede_keus"] += 1
+            tel["foto_liggend" if foto_oordeel(f, info, namen[a["id"]]) == 2 else "foto_tweede_keus"] += 1
             continue
         a.pop("foto", None)
         a.pop("fotoInfo", None)
@@ -2102,6 +2138,7 @@ def bouw(vorige, tel):
     park_aliassen = voeg_parken_samen(alle, tel)
     dubbel = voeg_dubbele_banen_samen(alle, set(splitsen), tel)
     naar_doel.update(dubbel)
+    land_uit_plek(alle, tel)
 
     # VR-versies horen bij de echte baan: je rit op een VR-versie telt voor die baan
     vr_doel = voeg_vr_samen(osm_vr + wd_vr, alle, tel)
@@ -2167,7 +2204,7 @@ def per_naam(lijst, q):
 # Wikipedia-links, vorige parken, ...) staat in data/details/, verdeeld over kleine
 # bestanden: de attractiepagina haalt alleen het stuk op waar die baan in staat.
 LIJSTVELDEN = ("id", "naam", "park", "parkId", "land", "type", "fabrikant", "status", "geopend", "gesloten",
-               "hoogte", "snelheid", "lengte", "inversies", "foto", "fotoInfo", "lat", "lon")
+               "hoogte", "snelheid", "lengte", "inversies", "foto", "fotoInfo", "lat", "lon", "vorigeParken")
 DETAILMAP = MAP / "data" / "details"
 DETAILDELEN = 16
 

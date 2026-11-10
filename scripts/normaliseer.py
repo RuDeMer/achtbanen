@@ -223,6 +223,10 @@ def naam(tekst, park=None):
     t = t.replace("’", "'").replace("‘", "'").replace("‛", "'").replace("`", "'").replace("´", "'")
     t = t.replace("“", '"').replace("”", '"').replace("„", '"')
     t = re.sub(r"\s+", " ", t).strip()
+    # De hele naam tussen aanhalingstekens ("Веселі гірки", «Змей»): die eraf
+    m = re.match(r'^["«\'](.+)["»\']$', t)
+    if m and not re.search(r'["«»]', m.group(1)):
+        t = m.group(1).strip()
     gepland = False
     m = re.match(r"^(.*\S)\s*\(([^()]*)\)$", t)
     if m:
